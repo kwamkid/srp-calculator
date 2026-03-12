@@ -25,6 +25,7 @@ export interface Product {
   srp_eur: number;
   multiplier: number;
   our_price_thb: number;
+  platform_price_thb: number;
   notes: string;
   sort_order: number;
   created_at: string;
@@ -73,7 +74,10 @@ export interface CalculatedProduct extends Product {
   margin_thb: number;
 }
 
-export interface SalesChannel {
+// --- Sales Channels (discriminated union) ---
+
+export interface OfflineChannel {
+  type: "offline";
   name: string;
   gp_pct: number;
   pc_pct: number;
@@ -81,11 +85,24 @@ export interface SalesChannel {
   promo_pct: number;
 }
 
+export interface OnlineChannel {
+  type: "online";
+  name: string;
+  commission_pct: number;
+  transaction_fee_pct: number;
+  service_fee_pct: number;
+  shipping_thb: number;
+  promo_pct: number;
+}
+
+export type SalesChannel = OfflineChannel | OnlineChannel;
+
 export interface ChannelProfit {
   channel_name: string;
+  channel_type: "offline" | "online";
   selling_price: number;
-  total_gp_pct: number;
-  store_profit_thb: number;
+  total_fees_pct: number;
+  fees_thb: number;
   our_profit_thb: number;
   our_profit_pct: number;
 }
@@ -99,8 +116,15 @@ export interface LoginHistory {
   user_agent: string;
 }
 
-export const DEFAULT_CHANNELS: SalesChannel[] = [
-  { name: "Retail", gp_pct: 30, pc_pct: 0, dc_pct: 0, promo_pct: 10 },
-  { name: "Central", gp_pct: 37, pc_pct: 7, dc_pct: 2, promo_pct: 0 },
-  { name: "The Mall", gp_pct: 35, pc_pct: 7, dc_pct: 0, promo_pct: 0 },
+export const DEFAULT_OFFLINE_CHANNELS: OfflineChannel[] = [
+  { type: "offline", name: "Retail", gp_pct: 30, pc_pct: 0, dc_pct: 0, promo_pct: 10 },
+  { type: "offline", name: "Central", gp_pct: 37, pc_pct: 7, dc_pct: 2, promo_pct: 0 },
+  { type: "offline", name: "The Mall", gp_pct: 35, pc_pct: 7, dc_pct: 0, promo_pct: 0 },
 ];
+
+export const DEFAULT_ONLINE_CHANNELS: OnlineChannel[] = [
+  { type: "online", name: "Dropship/Affiliate", commission_pct: 15, transaction_fee_pct: 0, service_fee_pct: 0, shipping_thb: 50, promo_pct: 0 },
+  { type: "online", name: "Platform", commission_pct: 10, transaction_fee_pct: 3, service_fee_pct: 2, shipping_thb: 40, promo_pct: 0 },
+];
+
+export const DEFAULT_CHANNELS: SalesChannel[] = [...DEFAULT_OFFLINE_CHANNELS, ...DEFAULT_ONLINE_CHANNELS];

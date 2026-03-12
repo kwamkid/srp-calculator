@@ -23,8 +23,8 @@ import { LoginPage } from "@/components/LoginPage";
 import { Tooltip } from "@/components/Tooltip";
 import { supabase } from "@/lib/supabase";
 import { calculateProduct, roundToNicePrice, calculateChannelProfit } from "@/lib/calculator";
-import { DEFAULT_CHANNELS } from "@/lib/types";
-import type { Brand, Product, CalculatedProduct, SalesChannel, BrandMember } from "@/lib/types";
+import { DEFAULT_OFFLINE_CHANNELS, DEFAULT_ONLINE_CHANNELS } from "@/lib/types";
+import type { Brand, Product, CalculatedProduct, SalesChannel, OfflineChannel, OnlineChannel, BrandMember } from "@/lib/types";
 import Link from "next/link";
 import Image from "next/image";
 import * as XLSX from "xlsx";
@@ -330,7 +330,6 @@ export default function BrandPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [saving, setSaving] = useState<string | null>(null);
   const [brandSaving, setBrandSaving] = useState(false);
-  const [channels, setChannels] = useState<SalesChannel[]>(DEFAULT_CHANNELS);
   const [showColumnMenu, setShowColumnMenu] = useState(false);
 
   const [myRole, setMyRole] = useState<"owner" | "editor" | "viewer">("viewer");
@@ -340,13 +339,16 @@ export default function BrandPage() {
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
+  const [activeTab, setActiveTab] = useState<"offline" | "online">("offline");
+  const [offlineChannels, setOfflineChannels] = useState<OfflineChannel[]>(DEFAULT_OFFLINE_CHANNELS);
+  const [onlineChannels, setOnlineChannels] = useState<OnlineChannel[]>(DEFAULT_ONLINE_CHANNELS);
   const [visibleGroups, setVisibleGroups] = useState<Record<string, boolean>>({
     sku: true,
     category: true,
     cost: true,
     srp: true,
     pricing: true,
-    ...Object.fromEntries(DEFAULT_CHANNELS.map(ch => [ch.name, true])),
+    ...Object.fromEntries([...DEFAULT_OFFLINE_CHANNELS, ...DEFAULT_ONLINE_CHANNELS].map(ch => [ch.name, true])),
   });
 
   const toggleGroup = (group: string) => {
@@ -355,19 +357,22 @@ export default function BrandPage() {
 
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
 
+  // Active channels based on tab
+  const channels: SalesChannel[] = activeTab === "offline" ? offlineChannels : onlineChannels;
+
   const columnGroups = [
     { key: "sku", label: "SKU" },
     { key: "category", label: "Category" },
     { key: "cost", label: "Cost" },
     { key: "srp", label: "SRP" },
-    { key: "pricing", label: "Thai Pricing" },
+    { key: "pricing", label: "Pricing" },
     ...channels.map(ch => ({ key: ch.name, label: ch.name })),
   ];
 
   const fetchData = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const [brandRes, productsRes, bmRes] = await Promise.all([
+    const [brandRes, productsRes, bmRes, channelsRes] = await Promise.all([
       supabase.from("brands").select("*").eq("id", brandId).single(),
       supabase
         .from("products")
@@ -375,6 +380,7 @@ export default function BrandPage() {
         .eq("brand_id", brandId)
         .order("sort_order", { ascending: true }),
       supabase.from("brand_members").select("*").eq("brand_id", brandId).eq("user_id", user.id).maybeSingle(),
+      supabase.from("brand_channels").select("*").eq("brand_id", brandId).order("sort_order"),
     ]);
     setBrand(brandRes.data);
     setProducts(productsRes.data || []);
@@ -385,6 +391,30 @@ export default function BrandPage() {
       setMyRole(bmRes.data.role === "editor" ? "editor" : "viewer");
     } else {
       setMyRole("viewer");
+    }
+    // Load channels from DB or seed defaults
+    const dbChannels = channelsRes.data || [];
+    if (dbChannels.length > 0) {
+      const offline = dbChannels.filter((c: { type: string }) => c.type === "offline").map((c: Record<string, unknown>) => ({
+        type: "offline" as const, name: c.name as string,
+        gp_pct: Number(c.gp_pct) || 0, pc_pct: Number(c.pc_pct) || 0, dc_pct: Number(c.dc_pct) || 0,
+        promo_pct: Number(c.promo_pct) || 0,
+      }));
+      const online = dbChannels.filter((c: { type: string }) => c.type === "online").map((c: Record<string, unknown>) => ({
+        type: "online" as const, name: c.name as string,
+        commission_pct: Number(c.commission_pct) || 0, transaction_fee_pct: Number(c.transaction_fee_pct) || 0,
+        service_fee_pct: Number(c.service_fee_pct) || 0, shipping_thb: Number(c.shipping_thb) || 0,
+        promo_pct: Number(c.promo_pct) || 0,
+      }));
+      if (offline.length > 0) setOfflineChannels(offline);
+      if (online.length > 0) setOnlineChannels(online);
+    } else if (brandRes.data) {
+      // Seed defaults for this brand
+      const seedRows = [
+        ...DEFAULT_OFFLINE_CHANNELS.map((ch, i) => ({ brand_id: brandId, type: "offline", name: ch.name, sort_order: i, gp_pct: ch.gp_pct, pc_pct: ch.pc_pct, dc_pct: ch.dc_pct, promo_pct: ch.promo_pct })),
+        ...DEFAULT_ONLINE_CHANNELS.map((ch, i) => ({ brand_id: brandId, type: "online", name: ch.name, sort_order: i, commission_pct: ch.commission_pct, transaction_fee_pct: ch.transaction_fee_pct, service_fee_pct: ch.service_fee_pct, shipping_thb: ch.shipping_thb, promo_pct: ch.promo_pct })),
+      ];
+      supabase.from("brand_channels").insert(seedRows).then();
     }
     setLoading(false);
   }, [user, brandId]);
@@ -586,6 +616,42 @@ export default function BrandPage() {
 
   const canEdit = myRole === "owner" || myRole === "editor";
 
+  // Save channel to DB (debounced via caller)
+  const channelSaveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const saveChannelToDB = useCallback((ch: SalesChannel) => {
+    const key = `ch_${ch.name}`;
+    if (channelSaveTimers.current[key]) clearTimeout(channelSaveTimers.current[key]);
+    channelSaveTimers.current[key] = setTimeout(async () => {
+      const row: Record<string, unknown> = { brand_id: brandId, type: ch.type, name: ch.name, promo_pct: ch.promo_pct };
+      if (ch.type === "offline") {
+        row.gp_pct = ch.gp_pct; row.pc_pct = ch.pc_pct; row.dc_pct = ch.dc_pct;
+      } else {
+        row.commission_pct = ch.commission_pct; row.transaction_fee_pct = ch.transaction_fee_pct;
+        row.service_fee_pct = ch.service_fee_pct; row.shipping_thb = ch.shipping_thb;
+      }
+      await supabase.from("brand_channels").upsert(row, { onConflict: "brand_id,name" });
+      delete channelSaveTimers.current[key];
+    }, 500);
+  }, [brandId]);
+
+  const updateOfflineChannel = useCallback((idx: number, updates: Partial<OfflineChannel>) => {
+    setOfflineChannels(prev => {
+      const updated = [...prev];
+      updated[idx] = { ...updated[idx], ...updates };
+      saveChannelToDB(updated[idx]);
+      return updated;
+    });
+  }, [saveChannelToDB]);
+
+  const updateOnlineChannel = useCallback((idx: number, updates: Partial<OnlineChannel>) => {
+    setOnlineChannels(prev => {
+      const updated = [...prev];
+      updated[idx] = { ...updated[idx], ...updates };
+      saveChannelToDB(updated[idx]);
+      return updated;
+    });
+  }, [saveChannelToDB]);
+
   const handleBulkApply = useCallback(async () => {
     if (!bulkEdit || bulkValue === "") return;
     const val = bulkEdit.type === "number" ? parseFloat(bulkValue) || 0 : bulkValue;
@@ -605,33 +671,54 @@ export default function BrandPage() {
 
   const handleExport = useCallback(() => {
     if (calculated.length === 0) return;
-    const data = calculated.map((p, i) => ({
-      "#": i + 1,
-      Product: p.name,
-      Category: p.category,
-      SKU: p.sku,
-      "FOB USD": p.fob_usd,
-      "FOB EUR": p.fob_eur,
-      "FOB THB": p.fob_thb,
-      "Freight + D/O": p.freight_do,
-      "Import Tax %": p.import_tax_pct,
-      "Shipping Cost": p.shipping_cost,
-      "Total Import Cost": p.total_import_cost,
-      "SRP USD": p.srp_usd,
-      "SRP EUR": p.srp_eur,
-      "SRP THB (Intl)": p.srp_thb,
-      Multiplier: p.multiplier,
-      "Suggested Price": p.suggested_price,
-      "Our Price (THB)": p.our_price_thb || p.suggested_price,
-      "Margin (THB)": p.margin_thb,
-      "Margin (%)": p.margin_pct,
-      Notes: p.notes,
-    }));
+    const data = calculated.map((p, i) => {
+      const ourPrice = p.our_price_thb || p.suggested_price;
+      const platPrice = p.platform_price_thb || 0;
+      const row: Record<string, unknown> = {
+        "#": i + 1,
+        Product: p.name,
+        Category: p.category,
+        SKU: p.sku,
+        "FOB USD": p.fob_usd,
+        "FOB EUR": p.fob_eur,
+        "FOB THB": p.fob_thb,
+        "Freight + D/O": p.freight_do,
+        "Import Tax %": p.import_tax_pct,
+        "Shipping Cost": p.shipping_cost,
+        "Total Import Cost": p.total_import_cost,
+        "SRP USD": p.srp_usd,
+        "SRP EUR": p.srp_eur,
+        "SRP THB (Intl)": p.srp_thb,
+        Multiplier: p.multiplier,
+        "Suggested Price": p.suggested_price,
+        "Our Price (THB)": ourPrice,
+        "Margin (THB)": p.margin_thb,
+        "Margin (%)": p.margin_pct,
+        "Platform Price (THB)": platPrice,
+        "Platform Margin (%)": platPrice > 0 ? Math.round(((platPrice - p.total_import_cost) / platPrice) * 10000) / 100 : 0,
+      };
+      // Offline channels
+      for (const ch of offlineChannels) {
+        const cp = calculateChannelProfit(ourPrice, p.total_import_cost, ch);
+        row[`${ch.name} Selling`] = cp.selling_price;
+        row[`${ch.name} Profit`] = cp.our_profit_thb;
+        row[`${ch.name} Profit%`] = cp.our_profit_pct;
+      }
+      // Online channels
+      for (const ch of onlineChannels) {
+        const cp = calculateChannelProfit(platPrice, p.total_import_cost, ch);
+        row[`${ch.name} Selling`] = cp.selling_price;
+        row[`${ch.name} Profit`] = cp.our_profit_thb;
+        row[`${ch.name} Profit%`] = cp.our_profit_pct;
+      }
+      row["Notes"] = p.notes;
+      return row;
+    });
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(data);
     XLSX.utils.book_append_sheet(wb, ws, brand?.name || "Products");
     XLSX.writeFile(wb, `${brand?.name || "products"}-prices.xlsx`);
-  }, [calculated, brand]);
+  }, [calculated, brand, offlineChannels, onlineChannels]);
 
   if (authLoading || loading) {
     return (
@@ -800,42 +887,58 @@ export default function BrandPage() {
                 />
               </div>
             </div>
+            {/* Offline Channels */}
             <div className="mt-4 border-t border-gray-200 pt-4">
-              <h3 className="text-sm font-semibold text-gray-800 mb-3">Sales Channels</h3>
+              <h3 className="text-sm font-semibold text-gray-800 mb-3">Offline Channels</h3>
               <div className="space-y-3">
-                {channels.map((ch, idx) => (
+                {offlineChannels.map((ch, idx) => (
                   <div key={idx} className="grid grid-cols-4 gap-3 items-center">
                     <div>
                       <label className="block text-xs text-gray-700 mb-1">Channel</label>
-                      <input type="text" value={ch.name} onChange={(e) => {
-                        const updated = [...channels];
-                        updated[idx] = { ...ch, name: e.target.value };
-                        setChannels(updated);
-                      }} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
+                      <input type="text" value={ch.name} onChange={(e) => updateOfflineChannel(idx, { name: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
                     </div>
                     <div>
-                      <label className="block text-xs text-gray-700 mb-1">GP++ %</label>
-                      <input type="number" value={ch.gp_pct} onChange={(e) => {
-                        const updated = [...channels];
-                        updated[idx] = { ...ch, gp_pct: parseFloat(e.target.value) || 0 };
-                        setChannels(updated);
-                      }} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
+                      <label className="block text-xs text-gray-700 mb-1">GP %</label>
+                      <input type="number" value={ch.gp_pct} onChange={(e) => updateOfflineChannel(idx, { gp_pct: parseFloat(e.target.value) || 0 })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
                     </div>
                     <div>
                       <label className="block text-xs text-gray-700 mb-1">PC %</label>
-                      <input type="number" value={ch.pc_pct} onChange={(e) => {
-                        const updated = [...channels];
-                        updated[idx] = { ...ch, pc_pct: parseFloat(e.target.value) || 0 };
-                        setChannels(updated);
-                      }} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
+                      <input type="number" value={ch.pc_pct} onChange={(e) => updateOfflineChannel(idx, { pc_pct: parseFloat(e.target.value) || 0 })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
                     </div>
                     <div>
                       <label className="block text-xs text-gray-700 mb-1">DC %</label>
-                      <input type="number" value={ch.dc_pct} onChange={(e) => {
-                        const updated = [...channels];
-                        updated[idx] = { ...ch, dc_pct: parseFloat(e.target.value) || 0 };
-                        setChannels(updated);
-                      }} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
+                      <input type="number" value={ch.dc_pct} onChange={(e) => updateOfflineChannel(idx, { dc_pct: parseFloat(e.target.value) || 0 })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Online Channels */}
+            <div className="mt-4 border-t border-gray-200 pt-4">
+              <h3 className="text-sm font-semibold text-gray-800 mb-3">Online Channels</h3>
+              <div className="space-y-3">
+                {onlineChannels.map((ch, idx) => (
+                  <div key={idx} className="grid grid-cols-5 gap-3 items-center">
+                    <div>
+                      <label className="block text-xs text-gray-700 mb-1">Channel</label>
+                      <input type="text" value={ch.name} onChange={(e) => updateOnlineChannel(idx, { name: e.target.value })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-700 mb-1">Commission %</label>
+                      <input type="number" value={ch.commission_pct} onChange={(e) => updateOnlineChannel(idx, { commission_pct: parseFloat(e.target.value) || 0 })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-700 mb-1">Tx Fee %</label>
+                      <input type="number" value={ch.transaction_fee_pct} onChange={(e) => updateOnlineChannel(idx, { transaction_fee_pct: parseFloat(e.target.value) || 0 })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-700 mb-1">Service Fee %</label>
+                      <input type="number" value={ch.service_fee_pct} onChange={(e) => updateOnlineChannel(idx, { service_fee_pct: parseFloat(e.target.value) || 0 })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-700 mb-1">Shipping &#3647;</label>
+                      <input type="number" value={ch.shipping_thb} onChange={(e) => updateOnlineChannel(idx, { shipping_thb: parseFloat(e.target.value) || 0 })} className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm text-gray-900" />
                     </div>
                   </div>
                 ))}
@@ -868,7 +971,7 @@ export default function BrandPage() {
           </div>
         ) : (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-            {/* Column toggle toolbar */}
+            {/* Column toggle toolbar + Channel tab */}
             <div className="px-4 py-2 border-b border-gray-200 flex items-center gap-1 flex-wrap bg-gray-50">
               {columnGroups.map((g) => (
                 <button
@@ -883,6 +986,30 @@ export default function BrandPage() {
                   {g.label}
                 </button>
               ))}
+              {/* Offline/Online channel tab */}
+              <span className="mx-1 text-gray-300">|</span>
+              <div className="flex bg-white rounded-md border border-gray-200 overflow-hidden">
+                <button
+                  onClick={() => setActiveTab("offline")}
+                  className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                    activeTab === "offline"
+                      ? "bg-gray-800 text-white"
+                      : "text-gray-500 hover:bg-gray-100"
+                  }`}
+                >
+                  Offline
+                </button>
+                <button
+                  onClick={() => setActiveTab("online")}
+                  className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                    activeTab === "online"
+                      ? "bg-gray-800 text-white"
+                      : "text-gray-500 hover:bg-gray-100"
+                  }`}
+                >
+                  Online
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -900,7 +1027,7 @@ export default function BrandPage() {
                     {visibleGroups.category && <th className="px-2 py-1.5">Cat</th>}
                     {visibleGroups.cost && <th className="px-2 py-1.5 text-center" colSpan={7 - (hasData.fob_usd ? 0 : 1) - (hasData.fob_eur ? 0 : 1)}>Cost</th>}
                     {visibleGroups.srp && <th className="px-2 py-1.5 text-center" colSpan={3 - (hasData.srp_usd ? 0 : 1) - (hasData.srp_eur ? 0 : 1)}>SRP</th>}
-                    {visibleGroups.pricing && <th className="px-2 py-1.5 text-center bg-green-800" colSpan={3}>Thai Pricing</th>}
+                    {visibleGroups.pricing && <th className="px-2 py-1.5 text-center bg-green-800" colSpan={4}>Pricing</th>}
                     {channels.map((ch, ci) => (
                       visibleGroups[ch.name] ? (
                         <th key={ch.name} className={`px-2 py-1.5 text-center ${chGroupBg(ci)}`} colSpan={4}>{ch.name}</th>
@@ -954,6 +1081,8 @@ export default function BrandPage() {
                         <th className="px-1.5 py-1.5 text-right bg-green-50 min-w-[90px]" data-group="pricing">Suggested</th>
                         <th className="px-1.5 py-1.5 text-right bg-emerald-200 font-bold text-emerald-900 min-w-[90px] cursor-pointer hover:bg-emerald-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "our_price_thb", label: "Our Price (THB)", type: "number" }); setBulkValue(""); }}>Our Price</th>
                         <th className="px-1.5 py-1.5 text-right bg-green-50 min-w-[60px]" data-group="pricing">Margin</th>
+                        <th className="px-1.5 py-1.5 text-right bg-orange-200 font-bold text-orange-900 min-w-[90px] cursor-pointer hover:bg-orange-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "platform_price_thb", label: "Platform Price (THB)", type: "number" }); setBulkValue(""); }}>Platform</th>
+                        <th className="px-1.5 py-1.5 text-right bg-orange-50 min-w-[60px]" data-group="pricing">Margin</th>
                       </>
                     )}
 
@@ -964,9 +1093,9 @@ export default function BrandPage() {
                               <select
                                 value={ch.promo_pct}
                                 onChange={(e) => {
-                                  const updated = [...channels];
-                                  updated[ci] = { ...ch, promo_pct: parseFloat(e.target.value) };
-                                  setChannels(updated);
+                                  const val = parseFloat(e.target.value);
+                                  if (activeTab === "offline") updateOfflineChannel(ci, { promo_pct: val });
+                                  else updateOnlineChannel(ci, { promo_pct: val });
                                 }}
                                 className="bg-white border border-gray-300 rounded px-1 py-0.5 text-xs text-gray-800 cursor-pointer"
                               >
@@ -975,7 +1104,9 @@ export default function BrandPage() {
                                 ))}
                               </select>
                           </th>
-                          <th className={`px-1.5 py-1.5 text-right min-w-[70px] ${chHeaderBg(ci)}`} data-group={ch.name}>GP {ch.gp_pct + ch.pc_pct + ch.dc_pct}%</th>
+                          <th className={`px-1.5 py-1.5 text-right min-w-[70px] ${chHeaderBg(ci)}`} data-group={ch.name}>
+                            {ch.type === "offline" ? `GP ${ch.gp_pct + ch.pc_pct + ch.dc_pct}%` : `Fee ${ch.commission_pct + ch.transaction_fee_pct + ch.service_fee_pct}%`}
+                          </th>
                           <th className={`px-1.5 py-1.5 text-right min-w-[70px] whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>Profit&#3647;</th>
                           <th className={`px-1.5 py-1.5 text-right min-w-[60px] whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>Profit%</th>
                         </React.Fragment>
@@ -1119,7 +1250,7 @@ export default function BrandPage() {
                           </>
                         )}
 
-                        {/* Thai Pricing */}
+                        {/* Pricing: Suggested + Our Price + Platform Price + Margin */}
                         {visibleGroups.pricing && (
                           <>
                             <td className="px-1 py-0.5 text-right bg-green-50 whitespace-nowrap" data-group="pricing">
@@ -1142,13 +1273,28 @@ export default function BrandPage() {
                                 {fmtDec(margin)}%
                               </span>
                             </td>
+                            <td className="px-1 py-0.5 bg-orange-600" data-group="pricing">
+                              <NumInput value={p.platform_price_thb || ""} placeholder="-" onChange={(v) => handleProductUpdate(p.id, "platform_price_thb", v)} className="w-full bg-transparent border-0 p-0 text-right font-bold text-white focus:ring-0 focus:outline-none focus:bg-orange-700 placeholder:text-orange-300" />
+                            </td>
+                            {(() => {
+                              const platPrice = p.platform_price_thb || 0;
+                              const platMargin = platPrice > 0 ? ((platPrice - p.total_import_cost) / platPrice) * 100 : 0;
+                              return (
+                                <td className="px-1 py-0.5 text-right bg-orange-50" data-group="pricing">
+                                  <span className={`inline-block px-1 py-0 rounded text-xs font-semibold ${profitColor(platMargin)}`}>
+                                    {platPrice > 0 ? `${fmtDec(platMargin)}%` : "-"}
+                                  </span>
+                                </td>
+                              );
+                            })()}
                           </>
                         )}
 
                         {/* Sales Channel columns */}
                         {channels.map((ch, ci) => {
                           if (!visibleGroups[ch.name]) return null;
-                          const cp = calculateChannelProfit(ourPrice, p.total_import_cost, ch);
+                          const channelPrice = ch.type === "online" ? (p.platform_price_thb || 0) : ourPrice;
+                          const cp = calculateChannelProfit(channelPrice, p.total_import_cost, ch);
                           return (
                             <React.Fragment key={ch.name}>
                               <td className={`px-1 py-0.5 text-right whitespace-nowrap ${chBg(ci)}`} data-group={ch.name}>
@@ -1158,7 +1304,7 @@ export default function BrandPage() {
                                 )}
                               </td>
                               <td className={`px-1 py-0.5 text-right whitespace-nowrap text-gray-700 ${chBg(ci)}`} data-group={ch.name}>
-                                {fmt(cp.store_profit_thb)}
+                                {fmt(cp.fees_thb)}
                               </td>
                               <td className={`px-1 py-0.5 text-right whitespace-nowrap font-semibold text-gray-900 ${chBg(ci)}`} data-group={ch.name}>
                                 {fmt(cp.our_profit_thb)}

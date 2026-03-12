@@ -25,15 +25,20 @@ export default function Home() {
   const [showCreate, setShowCreate] = useState(false);
   const [newBrand, setNewBrand] = useState("");
   const [creating, setCreating] = useState(false);
+  const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
 
   const fetchBrands = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const { data } = await supabase
-      .from("brands")
-      .select("*")
-      .order("created_at", { ascending: false });
-    setBrands(data || []);
+    // Check if user is authorized (owns brands or is a team member)
+    const [brandsRes, memberRes] = await Promise.all([
+      supabase.from("brands").select("*").order("created_at", { ascending: false }),
+      supabase.from("team_members").select("id").eq("member_user_id", user.id).limit(1),
+    ]);
+    const ownsBrands = (brandsRes.data || []).some(b => b.user_id === user.id);
+    const isTeamMember = (memberRes.data || []).length > 0;
+    setIsAuthorized(ownsBrands || isTeamMember);
+    setBrands(brandsRes.data || []);
     setLoading(false);
   }, [user]);
 
@@ -76,7 +81,31 @@ export default function Home() {
   }
 
   if (!user) {
-    return <LoginPage />;
+    return <LoginPage subtitle="เฉพาะผู้ได้รับเชิญเท่านั้น กรุณาติดต่อผู้ดูแลระบบ" />;
+  }
+
+  if (isAuthorized === false) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm text-center">
+          <Image src="/amgo-logo.svg" alt="AMGO" width={64} height={64} className="mx-auto mb-4" />
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">ไม่มีสิทธิ์เข้าใช้งาน</h1>
+          <p className="text-sm text-gray-600 mb-1">คุณยังไม่ได้รับเชิญให้เข้าใช้ระบบ</p>
+          <p className="text-xs text-gray-400 mb-6">กรุณาติดต่อผู้ดูแลเพื่อขอลิงก์เชิญ</p>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 mb-4">
+            <p className="text-xs text-gray-500 mb-1">Signed in as</p>
+            <p className="text-sm font-medium text-gray-900">{user.email}</p>
+          </div>
+          <button
+            onClick={signOut}
+            className="flex items-center justify-center gap-2 w-full py-2.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            ออกจากระบบ
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

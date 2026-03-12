@@ -66,30 +66,43 @@ export function calculateProduct(
 }
 
 export function calculateChannelProfit(
-  ourPrice: number,
+  price: number,
   totalImportCost: number,
   channel: SalesChannel
 ): ChannelProfit {
   // Selling price after permanent promo discount
-  const selling_price = ourPrice * (1 - (channel.promo_pct || 0) / 100);
+  const selling_price = price * (1 - (channel.promo_pct || 0) / 100);
 
-  // Total GP = GP++ + PC + DC
-  const total_gp_pct = (channel.gp_pct || 0) + (channel.pc_pct || 0) + (channel.dc_pct || 0);
+  if (channel.type === "online") {
+    // Online: commission + transaction fee + service fee + shipping
+    const total_fees_pct = (channel.commission_pct || 0) + (channel.transaction_fee_pct || 0) + (channel.service_fee_pct || 0);
+    const fees_thb = selling_price * total_fees_pct / 100;
+    const our_profit_thb = selling_price - fees_thb - (channel.shipping_thb || 0) - totalImportCost;
+    const our_profit_pct = selling_price > 0 ? (our_profit_thb / selling_price) * 100 : 0;
 
-  // Store takes their cut
-  const store_profit_thb = selling_price * total_gp_pct / 100;
+    return {
+      channel_name: channel.name,
+      channel_type: "online",
+      selling_price: Math.round(selling_price),
+      total_fees_pct: Math.round(total_fees_pct * 100) / 100,
+      fees_thb: Math.round(fees_thb),
+      our_profit_thb: Math.round(our_profit_thb),
+      our_profit_pct: Math.round(our_profit_pct * 100) / 100,
+    };
+  }
 
-  // What we keep after store fees minus our import cost
-  const our_profit_thb = selling_price - store_profit_thb - totalImportCost;
-
-  // Our profit as % of selling price
+  // Offline: GP + PC + DC
+  const total_fees_pct = (channel.gp_pct || 0) + (channel.pc_pct || 0) + (channel.dc_pct || 0);
+  const fees_thb = selling_price * total_fees_pct / 100;
+  const our_profit_thb = selling_price - fees_thb - totalImportCost;
   const our_profit_pct = selling_price > 0 ? (our_profit_thb / selling_price) * 100 : 0;
 
   return {
     channel_name: channel.name,
+    channel_type: "offline",
     selling_price: Math.round(selling_price),
-    total_gp_pct: Math.round(total_gp_pct * 100) / 100,
-    store_profit_thb: Math.round(store_profit_thb),
+    total_fees_pct: Math.round(total_fees_pct * 100) / 100,
+    fees_thb: Math.round(fees_thb),
     our_profit_thb: Math.round(our_profit_thb),
     our_profit_pct: Math.round(our_profit_pct * 100) / 100,
   };
