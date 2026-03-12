@@ -33,6 +33,8 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [creatingInvite, setCreatingInvite] = useState(false);
+  const [inviteBrandId, setInviteBrandId] = useState<string>("");
+  const [inviteRole, setInviteRole] = useState<"viewer" | "editor">("editor");
 
   const fetchData = useCallback(async () => {
     if (!user) return;
@@ -59,10 +61,14 @@ export default function MembersPage() {
   const handleCreateInvite = useCallback(async () => {
     if (!user) return;
     setCreatingInvite(true);
-    await supabase.from("invites").insert({ created_by: user.id });
+    await supabase.from("invites").insert({
+      created_by: user.id,
+      brand_id: inviteBrandId || null,
+      role: inviteBrandId ? inviteRole : null,
+    });
     await fetchData();
     setCreatingInvite(false);
-  }, [user, fetchData]);
+  }, [user, fetchData, inviteBrandId, inviteRole]);
 
   const handleDeleteInvite = useCallback(async (id: string) => {
     await supabase.from("invites").delete().eq("id", id);
@@ -160,29 +166,62 @@ export default function MembersPage() {
               <Link2 className="w-4 h-4" />
               Invite Links
             </h2>
-            <button
-              onClick={handleCreateInvite}
-              disabled={creatingInvite}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-            >
-              <UserPlus className="w-4 h-4" />
-              {creatingInvite ? "Creating..." : "Generate Link"}
-            </button>
+            <div className="flex items-center gap-2">
+              <select
+                value={inviteBrandId}
+                onChange={(e) => setInviteBrandId(e.target.value)}
+                className="px-2.5 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="">All brands</option>
+                {brands.map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+              {inviteBrandId && (
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as "viewer" | "editor")}
+                  className="px-2.5 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="editor">Editor</option>
+                  <option value="viewer">Viewer</option>
+                </select>
+              )}
+              <button
+                onClick={handleCreateInvite}
+                disabled={creatingInvite}
+                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                <UserPlus className="w-4 h-4" />
+                {creatingInvite ? "Creating..." : "Generate Link"}
+              </button>
+            </div>
           </div>
 
           {unusedInvites.length === 0 && usedInvites.length === 0 ? (
             <p className="text-sm text-gray-500 py-3 text-center">No invite links yet. Generate a link to invite team members.</p>
           ) : (
             <div className="space-y-2">
-              {unusedInvites.map((inv) => (
+              {unusedInvites.map((inv) => {
+                const invBrand = brands.find(b => b.id === inv.brand_id);
+                return (
                 <div key={inv.id} className="flex items-center justify-between px-3 py-2.5 bg-blue-50 border border-blue-100 rounded-lg">
                   <div className="flex-1 min-w-0">
                     <code className="text-xs text-blue-800 font-mono truncate block">
                       {typeof window !== "undefined" ? `${window.location.origin}/invite/${inv.token}` : inv.token}
                     </code>
-                    <span className="text-[10px] text-blue-500 mt-0.5 block">
-                      Expires {new Date(inv.expires_at).toLocaleDateString("th-TH")}
-                    </span>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-[10px] text-blue-500">
+                        Expires {new Date(inv.expires_at).toLocaleDateString("th-TH")}
+                      </span>
+                      {invBrand && (
+                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                          inv.role === "editor" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                        }`}>
+                          {invBrand.name} &middot; {inv.role === "editor" ? "Edit" : "View"}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex items-center gap-1.5 ml-3">
                     <button
@@ -200,7 +239,8 @@ export default function MembersPage() {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
               {usedInvites.map((inv) => (
                 <div key={inv.id} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg opacity-60">
                   <div>

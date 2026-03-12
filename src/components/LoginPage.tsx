@@ -4,18 +4,24 @@ import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 import Image from "next/image";
 
-export function LoginPage({ redirectTo }: { redirectTo?: string }) {
+export function LoginPage({ redirectTo, title, subtitle }: {
+  redirectTo?: string;
+  title?: string;
+  subtitle?: string;
+}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleGoogleSignIn = async () => {
     setLoading(true);
     setError(null);
-    const callbackUrl = `${window.location.origin}/auth/callback${redirectTo ? `?next=${encodeURIComponent(redirectTo)}` : ""}`;
+    const target = redirectTo
+      ? `${window.location.origin}${redirectTo}`
+      : window.location.origin;
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: callbackUrl,
+        redirectTo: target,
       },
     });
     if (error) {
@@ -33,9 +39,11 @@ export function LoginPage({ redirectTo }: { redirectTo?: string }) {
         </div>
 
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-2 text-center">Sign In</h2>
+          <h2 className="text-lg font-semibold text-gray-900 mb-2 text-center">
+            {title || "Sign In"}
+          </h2>
           <p className="text-sm text-gray-500 mb-6 text-center">
-            Sign in with your Google account to continue.
+            {subtitle || "Sign in with your Google account to continue."}
           </p>
 
           {error && (

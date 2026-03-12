@@ -40,6 +40,8 @@ export interface Invite {
   used_at: string | null;
   expires_at: string;
   created_at: string;
+  brand_id: string | null;
+  role: "viewer" | "editor" | null;
 }
 
 export interface TeamMember {
