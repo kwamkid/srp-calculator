@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -14,6 +14,9 @@ import {
   Columns3,
   Eye,
   EyeOff,
+  X,
+  Plus,
+  Check,
 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { LoginPage } from "@/components/LoginPage";
@@ -57,6 +60,263 @@ function chHeaderBg(idx: number) { return CHANNEL_HEADER_BG[idx % CHANNEL_HEADER
 function chGroupBg(idx: number) { return CHANNEL_GROUP_BG[idx % CHANNEL_GROUP_BG.length]; }
 
 const PROMO_OPTIONS = [0, 5, 10, 15, 20, 25, 30];
+const PER_PAGE_OPTIONS = [25, 50, 100];
+
+function NumInput({ value, onChange, placeholder, className, step }: {
+  value: number | string;
+  onChange: (val: number) => void;
+  placeholder?: string;
+  className?: string;
+  step?: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  const [raw, setRaw] = useState("");
+  const num = typeof value === "number" ? value : parseFloat(value as string) || 0;
+  const display = !focused && num ? fmt(num) : undefined;
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={focused ? raw : (display || (value === "" || value === 0 ? "" : String(value)))}
+      placeholder={placeholder}
+      step={step}
+      onFocus={() => {
+        setFocused(true);
+        setRaw(num ? String(num) : "");
+      }}
+      onBlur={() => {
+        setFocused(false);
+        onChange(parseFloat(raw) || 0);
+      }}
+      onChange={(e) => {
+        const v = e.target.value.replace(/[^0-9.\-]/g, "");
+        setRaw(v);
+        onChange(parseFloat(v) || 0);
+      }}
+      className={className}
+    />
+  );
+}
+
+function profitColor(pct: number): string {
+  // 30%+ = green
+  if (pct >= 50) return "bg-green-300 text-green-900";
+  if (pct >= 45) return "bg-green-200 text-green-800";
+  if (pct >= 40) return "bg-green-100 text-green-700";
+  if (pct >= 35) return "bg-green-50 text-green-600";
+  if (pct >= 30) return "bg-emerald-50 text-emerald-600";
+  // 15–29% = yellow
+  if (pct >= 25) return "bg-yellow-100 text-yellow-700";
+  if (pct >= 20) return "bg-yellow-200 text-yellow-800";
+  if (pct >= 15) return "bg-amber-200 text-amber-800";
+  // 0–14% = red
+  if (pct >= 10) return "bg-red-100 text-red-600";
+  if (pct >= 5)  return "bg-red-200 text-red-700";
+  if (pct >= 0)  return "bg-red-300 text-red-800";
+  // Negative = purple → black
+  if (pct >= -5)  return "bg-purple-500 text-white";
+  if (pct >= -10) return "bg-purple-600 text-white";
+  if (pct >= -15) return "bg-purple-700 text-white";
+  if (pct >= -20) return "bg-purple-900 text-white";
+  return "bg-gray-900 text-white";
+}
+
+function Checkbox({ checked, indeterminate, onChange, dark }: {
+  checked: boolean;
+  indeterminate?: boolean;
+  onChange: (checked: boolean) => void;
+  dark?: boolean;
+}) {
+  return (
+    <button
+      onClick={() => onChange(!checked)}
+      className={`w-4 h-4 rounded flex items-center justify-center transition-all duration-150 border ${
+        checked || indeterminate
+          ? "bg-blue-500 border-blue-500 shadow-sm shadow-blue-500/30"
+          : dark
+            ? "border-slate-500 bg-slate-700 hover:border-slate-400"
+            : "border-gray-300 bg-white hover:border-blue-400"
+      }`}
+    >
+      {checked && (
+        <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+          <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      )}
+      {!checked && indeterminate && (
+        <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+          <path d="M3 6H9" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+        </svg>
+      )}
+    </button>
+  );
+}
+
+function CategoryCell({ value, categories, onChange, onDeleteCategory }: {
+  value: string;
+  categories: string[];
+  onChange: (val: string) => void;
+  onDeleteCategory: (cat: string, replaceTo: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setSearch("");
+        setDeleting(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 0);
+  }, [open]);
+
+  const filtered = categories.filter(c =>
+    c.toLowerCase().includes(search.toLowerCase())
+  );
+  const isNew = search.trim() && !categories.some(c => c.toLowerCase() === search.trim().toLowerCase());
+  const othersForReplace = categories.filter(c => c !== deleting);
+
+  return (
+    <div ref={ref} className="relative">
+      {/* Display */}
+      <div
+        className="flex items-center gap-1 cursor-pointer min-h-[24px]"
+        onClick={() => { setOpen(!open); setDeleting(null); }}
+      >
+        {value ? (
+          <span className="truncate text-gray-700 flex-1">{value}</span>
+        ) : (
+          <span className="text-gray-300 text-[13px] flex-1">-</span>
+        )}
+        <ChevronDown className={`w-3 h-3 text-gray-300 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </div>
+
+      {/* Dropdown */}
+      {open && (
+        <div className="absolute top-full left-0 z-50 mt-0.5 w-[240px] bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden">
+          {/* Search input */}
+          <div className="p-1.5 border-b border-gray-100">
+            <input
+              ref={inputRef}
+              type="text"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setDeleting(null); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  if (isNew) {
+                    onChange(search.trim());
+                    setSearch("");
+                    setOpen(false);
+                  } else if (filtered.length === 1) {
+                    onChange(filtered[0]);
+                    setSearch("");
+                    setOpen(false);
+                  }
+                }
+                if (e.key === "Escape") { setOpen(false); setSearch(""); }
+              }}
+              placeholder="Search or add..."
+              className="w-full text-[13px] px-2 py-1.5 bg-gray-50 border border-gray-200 rounded-md focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20 placeholder:text-gray-300"
+            />
+          </div>
+
+          {/* Delete confirm panel */}
+          {deleting && (
+            <div className="p-2 bg-red-50 border-b border-red-100">
+              <div className="text-[12px] text-red-600 font-medium mb-1.5">
+                Delete &quot;{deleting}&quot; — replace with:
+              </div>
+              <div className="flex flex-wrap gap-1">
+                <button
+                  onClick={() => { onDeleteCategory(deleting, ""); setDeleting(null); setSearch(""); setOpen(false); }}
+                  className="px-2 py-0.5 text-[11px] rounded-full bg-white border border-red-200 text-red-500 hover:bg-red-100 transition-colors"
+                >
+                  None (clear)
+                </button>
+                {othersForReplace.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => { onDeleteCategory(deleting, c); setDeleting(null); setSearch(""); setOpen(false); }}
+                    className="px-2 py-0.5 text-[11px] rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 transition-colors"
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Options list */}
+          <div className="max-h-[200px] overflow-y-auto py-0.5">
+            {/* Clear current */}
+            {value && !search && (
+              <button
+                onClick={() => { onChange(""); setOpen(false); setSearch(""); }}
+                className="w-full px-3 py-1.5 text-left text-[13px] text-gray-400 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+                Clear
+              </button>
+            )}
+
+            {filtered.map(c => (
+              <div
+                key={c}
+                className={`flex items-center transition-colors ${
+                  c === value ? "bg-blue-50" : "hover:bg-gray-50"
+                }`}
+              >
+                <button
+                  onClick={() => { onChange(c); setSearch(""); setOpen(false); }}
+                  className={`flex-1 px-3 py-1.5 text-left text-[13px] flex items-center gap-2 truncate ${
+                    c === value ? "text-blue-700 font-medium" : "text-gray-700"
+                  }`}
+                >
+                  {c === value ? <Check className="w-3.5 h-3.5 text-blue-500 shrink-0" /> : <span className="w-3.5 shrink-0" />}
+                  {c}
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setDeleting(deleting === c ? null : c); }}
+                  className="px-2 py-1.5 text-gray-300 hover:text-red-500 transition-colors"
+                  title={`Delete "${c}"`}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+
+            {/* Create new */}
+            {isNew && (
+              <button
+                onClick={() => { onChange(search.trim()); setSearch(""); setOpen(false); }}
+                className="w-full px-3 py-1.5 text-left text-[13px] text-blue-600 hover:bg-blue-50 flex items-center gap-2 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Create &quot;{search.trim()}&quot;
+              </button>
+            )}
+
+            {!isNew && filtered.length === 0 && (
+              <div className="px-3 py-2 text-[13px] text-gray-400 text-center">No categories found</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function BrandPage() {
   const { user, loading: authLoading } = useAuth();
@@ -71,9 +331,16 @@ export default function BrandPage() {
   const [brandSaving, setBrandSaving] = useState(false);
   const [channels, setChannels] = useState<SalesChannel[]>(DEFAULT_CHANNELS);
   const [showColumnMenu, setShowColumnMenu] = useState(false);
-  const [newCategoryFor, setNewCategoryFor] = useState<string | null>(null);
+
   const [myRole, setMyRole] = useState<"owner" | "editor" | "viewer">("viewer");
+  const [bulkEdit, setBulkEdit] = useState<{ field: keyof Product; label: string; type: "number" | "text" } | null>(null);
+  const [bulkValue, setBulkValue] = useState("");
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [currentPage, setCurrentPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
   const [visibleGroups, setVisibleGroups] = useState<Record<string, boolean>>({
+    sku: true,
     category: true,
     cost: true,
     srp: true,
@@ -88,6 +355,7 @@ export default function BrandPage() {
   const categories = [...new Set(products.map(p => p.category).filter(Boolean))];
 
   const columnGroups = [
+    { key: "sku", label: "SKU" },
     { key: "category", label: "Category" },
     { key: "cost", label: "Cost" },
     { key: "srp", label: "SRP" },
@@ -138,6 +406,10 @@ export default function BrandPage() {
     ? products.map((p) => calculateProduct(p, brand))
     : [];
 
+  const totalPages = Math.max(1, Math.ceil(calculated.length / perPage));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedProducts = calculated.slice((safePage - 1) * perPage, safePage * perPage);
+
   // Auto-hide columns when no product has a value
   const hasData = {
     fob_usd: products.some((p) => p.fob_usd),
@@ -161,19 +433,27 @@ export default function BrandPage() {
     [brand]
   );
 
+  // Debounced DB save — instant local update, batched DB write
+  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
   const handleProductUpdate = useCallback(
-    async (productId: string, field: keyof Product, value: number | string) => {
+    (productId: string, field: keyof Product, value: number | string) => {
       const editedBy = user?.email || "";
       const editedAt = new Date().toISOString();
-      setSaving(productId);
+      // Instant local state update
       setProducts((prev) =>
         prev.map((p) => (p.id === productId ? { ...p, [field]: value, last_edited_by: editedBy, last_edited_at: editedAt } : p))
       );
-      await supabase
-        .from("products")
-        .update({ [field]: value, last_edited_by: editedBy, last_edited_at: editedAt })
-        .eq("id", productId);
-      setSaving(null);
+      // Debounce DB write (400ms)
+      const key = `${productId}_${field}`;
+      if (saveTimers.current[key]) clearTimeout(saveTimers.current[key]);
+      saveTimers.current[key] = setTimeout(async () => {
+        await supabase
+          .from("products")
+          .update({ [field]: value, last_edited_by: editedBy, last_edited_at: editedAt })
+          .eq("id", productId);
+        delete saveTimers.current[key];
+      }, 400);
     },
     [user]
   );
@@ -237,14 +517,64 @@ export default function BrandPage() {
     []
   );
 
+  const handleDeleteCategory = useCallback(
+    (cat: string, replaceTo: string) => {
+      setProducts(prev =>
+        prev.map(p =>
+          p.category === cat ? { ...p, category: replaceTo } : p
+        )
+      );
+      // Persist to DB
+      products.filter(p => p.category === cat).forEach(p => {
+        supabase.from("products").update({ category: replaceTo }).eq("id", p.id).then();
+      });
+    },
+    [products]
+  );
+
   const handleImageUpload = useCallback(
     async (productId: string, file: File) => {
-      const ext = file.name.split(".").pop();
-      const path = `${brandId}/${productId}.${ext}`;
+      // Crop to square + compress to ≤300KB
+      const compressed = await new Promise<Blob>((resolve) => {
+        const img = new window.Image();
+        img.onload = () => {
+          const size = Math.min(img.width, img.height);
+          const sx = (img.width - size) / 2;
+          const sy = (img.height - size) / 2;
+          const canvas = document.createElement("canvas");
+          canvas.width = 800;
+          canvas.height = 800;
+          const ctx = canvas.getContext("2d")!;
+          ctx.drawImage(img, sx, sy, size, size, 0, 0, 800, 800);
+          // Try decreasing quality until ≤300KB
+          let quality = 0.9;
+          const tryCompress = () => {
+            canvas.toBlob(
+              (blob) => {
+                if (blob && (blob.size <= 300 * 1024 || quality <= 0.1)) {
+                  resolve(blob!);
+                } else {
+                  quality -= 0.1;
+                  tryCompress();
+                }
+              },
+              "image/jpeg",
+              quality
+            );
+          };
+          tryCompress();
+        };
+        img.src = URL.createObjectURL(file);
+      });
+
+      const path = `${brandId}/${productId}.jpg`;
       const { error } = await supabase.storage
         .from("product-images")
-        .upload(path, file, { upsert: true });
-      if (error) return;
+        .upload(path, compressed, { upsert: true, contentType: "image/jpeg" });
+      if (error) {
+        console.error("Upload error:", error.message);
+        return;
+      }
       const {
         data: { publicUrl },
       } = supabase.storage.from("product-images").getPublicUrl(path);
@@ -254,6 +584,23 @@ export default function BrandPage() {
   );
 
   const canEdit = myRole === "owner" || myRole === "editor";
+
+  const handleBulkApply = useCallback(async () => {
+    if (!bulkEdit || bulkValue === "") return;
+    const val = bulkEdit.type === "number" ? parseFloat(bulkValue) || 0 : bulkValue;
+    const editedBy = user?.email || "";
+    const editedAt = new Date().toISOString();
+    setProducts((prev) =>
+      prev.map((p) => ({ ...p, [bulkEdit.field]: val, last_edited_by: editedBy, last_edited_at: editedAt }))
+    );
+    const ids = products.map((p) => p.id);
+    await supabase
+      .from("products")
+      .update({ [bulkEdit.field]: val, last_edited_by: editedBy, last_edited_at: editedAt })
+      .in("id", ids);
+    setBulkEdit(null);
+    setBulkValue("");
+  }, [bulkEdit, bulkValue, products, user]);
 
   const handleExport = useCallback(() => {
     if (calculated.length === 0) return;
@@ -521,141 +868,98 @@ export default function BrandPage() {
         ) : (
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
             {/* Column toggle toolbar */}
-            <div className="px-4 py-2 border-b border-gray-200 flex items-center gap-2 bg-gray-50">
-              <div className="relative">
+            <div className="px-4 py-2 border-b border-gray-200 flex items-center gap-1 flex-wrap bg-gray-50">
+              {columnGroups.map((g) => (
                 <button
-                  onClick={() => setShowColumnMenu(!showColumnMenu)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 border border-gray-300 rounded-lg hover:bg-white transition-colors"
+                  key={g.key}
+                  onClick={() => toggleGroup(g.key)}
+                  className={`px-2 py-1 text-xs rounded-md border transition-colors ${
+                    visibleGroups[g.key]
+                      ? "bg-blue-50 border-blue-200 text-blue-700"
+                      : "bg-gray-100 border-gray-200 text-gray-500"
+                  }`}
                 >
-                  <Columns3 className="w-4 h-4" />
-                  Columns
-                  <ChevronDown className="w-3 h-3" />
+                  {g.label}
                 </button>
-                {showColumnMenu && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setShowColumnMenu(false)} />
-                    <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1 min-w-[180px]">
-                      {columnGroups.map((g) => (
-                        <button
-                          key={g.key}
-                          onClick={() => toggleGroup(g.key)}
-                          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-800 hover:bg-gray-50 transition-colors"
-                        >
-                          {visibleGroups[g.key] ? (
-                            <Eye className="w-4 h-4 text-blue-500" />
-                          ) : (
-                            <EyeOff className="w-4 h-4 text-gray-400" />
-                          )}
-                          {g.label}
-                        </button>
-                      ))}
-                      <div className="border-t border-gray-100 mt-1 pt-1">
-                        <button
-                          onClick={() => {
-                            const allOn: Record<string, boolean> = {};
-                            columnGroups.forEach(g => { allOn[g.key] = true; });
-                            setVisibleGroups(allOn);
-                          }}
-                          className="w-full px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 text-left transition-colors"
-                        >
-                          Show All
-                        </button>
-                        <button
-                          onClick={() => {
-                            const allOff: Record<string, boolean> = {};
-                            columnGroups.forEach(g => { allOff[g.key] = false; });
-                            setVisibleGroups(allOff);
-                          }}
-                          className="w-full px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 text-left transition-colors"
-                        >
-                          Hide All
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="flex items-center gap-1 flex-wrap">
-                {columnGroups.map((g) => (
-                  <button
-                    key={g.key}
-                    onClick={() => toggleGroup(g.key)}
-                    className={`px-2 py-1 text-xs rounded-md border transition-colors ${
-                      visibleGroups[g.key]
-                        ? "bg-blue-50 border-blue-200 text-blue-700"
-                        : "bg-gray-100 border-gray-200 text-gray-500"
-                    }`}
-                  >
-                    {g.label}
-                  </button>
-                ))}
-              </div>
+              ))}
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <style>{`.excel-grid th, .excel-grid td { outline: 1px solid #d1d5db; outline-offset: -0.5px; }
+.excel-grid thead tr:first-child th { outline-color: #374151; }
+.row-highlight td { background-color: #1e293b !important; }
+.row-highlight td, .row-highlight td * { color: #f1f5f9 !important; }
+.row-highlight td span[class*="bg-"], .row-highlight td div[class*="bg-"] { background-color: rgba(255,255,255,0.1) !important; }
+.row-highlight td input::placeholder, .row-highlight td textarea::placeholder { color: #64748b !important; }`}</style>
+              <table className="w-full border-separate excel-grid" style={{ borderSpacing: 0, fontSize: "14px" }}>
                 <thead>
                   {/* Group header row */}
-                  <tr className="bg-gray-800 text-white text-xs">
-                    <th className="px-2 py-1.5 sticky left-0 z-20 bg-gray-800" colSpan={4}>Product</th>
-                    {visibleGroups.category && <th className="px-2 py-1.5 border-l border-gray-600">Cat</th>}
-                    {visibleGroups.cost && <th className="px-2 py-1.5 text-center border-l border-gray-600" colSpan={7 - (hasData.fob_usd ? 0 : 1) - (hasData.fob_eur ? 0 : 1)}>Cost</th>}
-                    {visibleGroups.srp && <th className="px-2 py-1.5 text-center border-l border-gray-600" colSpan={3 - (hasData.srp_usd ? 0 : 1) - (hasData.srp_eur ? 0 : 1)}>SRP</th>}
-                    {visibleGroups.pricing && <th className="px-2 py-1.5 text-center border-l border-gray-600 bg-green-800" colSpan={3}>Thai Pricing</th>}
+                  <tr className="bg-gray-800 text-white text-sm">
+                    <th className="px-2 py-1.5 bg-gray-800" colSpan={visibleGroups.sku ? 5 : 4}>Product</th>
+                    {visibleGroups.category && <th className="px-2 py-1.5">Cat</th>}
+                    {visibleGroups.cost && <th className="px-2 py-1.5 text-center" colSpan={7 - (hasData.fob_usd ? 0 : 1) - (hasData.fob_eur ? 0 : 1)}>Cost</th>}
+                    {visibleGroups.srp && <th className="px-2 py-1.5 text-center" colSpan={3 - (hasData.srp_usd ? 0 : 1) - (hasData.srp_eur ? 0 : 1)}>SRP</th>}
+                    {visibleGroups.pricing && <th className="px-2 py-1.5 text-center bg-green-800" colSpan={3}>Thai Pricing</th>}
                     {channels.map((ch, ci) => (
                       visibleGroups[ch.name] ? (
-                        <th key={ch.name} className={`px-2 py-1.5 text-center border-l border-gray-600 ${chGroupBg(ci)}`} colSpan={4}>{ch.name}</th>
+                        <th key={ch.name} className={`px-2 py-1.5 text-center ${chGroupBg(ci)}`} colSpan={4}>{ch.name}</th>
                       ) : null
                     ))}
-                    <th className="px-2 py-1.5 w-8"></th>
+                    <th className="px-2 py-1.5 w-8" colSpan={2}></th>
                   </tr>
                   {/* Column header row */}
-                  <tr className="bg-gray-100 text-gray-800 font-medium">
-                    {/* Frozen columns */}
-                    <th className="px-2 py-2 text-left w-[40px] sticky left-0 z-20 bg-gray-100">#</th>
-                    <th className="px-2 py-2 text-center w-[52px] sticky left-[40px] z-20 bg-gray-100">Image</th>
-                    <th className="px-2 py-2 text-left w-[200px] min-w-[200px] sticky left-[92px] z-20 bg-gray-100">Product</th>
-                    <th className="px-2 py-2 text-left w-[180px] min-w-[180px] sticky left-[292px] z-20 bg-gray-100 border-r border-gray-300 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">SKU</th>
+                  <tr className="bg-gray-100 text-gray-700 font-semibold">
+                    <th className="px-1 py-1.5 text-center w-[28px] bg-gray-100" data-group="product">
+                      <Checkbox
+                        checked={paginatedProducts.length > 0 && paginatedProducts.every(p => selectedRows.has(p.id))}
+                        indeterminate={paginatedProducts.some(p => selectedRows.has(p.id)) && !paginatedProducts.every(p => selectedRows.has(p.id))}
+                        onChange={(c) => {
+                          if (c) setSelectedRows(new Set(paginatedProducts.map(p => p.id)));
+                          else setSelectedRows(new Set());
+                        }}
+                      />
+                    </th>
+                    <th className="px-1 py-1.5 text-center w-[32px] bg-gray-100" data-group="product">#</th>
+                    <th className="p-0.5 py-1.5 text-center w-[50px] bg-gray-100" data-group="product">Img</th>
+                    <th className="px-1.5 py-1.5 text-left min-w-[180px] bg-gray-100" data-group="product">Product</th>
+                    {visibleGroups.sku && <th className="px-1.5 py-1.5 text-left min-w-[140px] bg-gray-100" data-group="product">SKU</th>}
 
-                    {/* Scrollable columns */}
                     {visibleGroups.category && (
-                      <th className="px-2 py-2 text-left">Category</th>
+                      <th className="px-1.5 py-1.5 text-left min-w-[200px] w-[200px] bg-white" data-group="category">Cat</th>
                     )}
 
                     {visibleGroups.cost && (
                       <>
-                        {hasData.fob_usd && <th className="px-2 py-2 text-right min-w-[100px] bg-sky-50">FOB $</th>}
-                        {hasData.fob_eur && <th className="px-2 py-2 text-right min-w-[100px] bg-sky-50">FOB &euro;</th>}
-                        <th className="px-2 py-2 text-right min-w-[100px] bg-sky-50">FOB &#3647;</th>
-                        <th className="px-2 py-2 text-right min-w-[100px] bg-sky-50">Freight+D/O</th>
-                        <th className="px-2 py-2 text-right min-w-[80px] bg-sky-50">Tax %</th>
-                        <th className="px-2 py-2 text-right min-w-[100px] bg-sky-50">Shipping</th>
-                        <th className="px-2 py-2 text-right min-w-[100px] bg-sky-50 border-r border-gray-300 font-bold">Total Cost</th>
+                        {hasData.fob_usd && <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "fob_usd", label: "FOB USD", type: "number" }); setBulkValue(""); }}>FOB $</th>}
+                        {hasData.fob_eur && <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "fob_eur", label: "FOB EUR", type: "number" }); setBulkValue(""); }}>FOB &euro;</th>}
+                        <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50" data-group="cost">FOB &#3647;</th>
+                        <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "freight_do", label: "Freight+D/O", type: "number" }); setBulkValue(""); }}>Freight+D/O</th>
+                        <th className="px-1.5 py-1.5 text-right min-w-[60px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "import_tax_pct", label: "Import Tax %", type: "number" }); setBulkValue(""); }}>Tax %</th>
+                        <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "shipping_cost", label: "Shipping Cost", type: "number" }); setBulkValue(""); }}>Shipping</th>
+                        <th className="px-1.5 py-1.5 text-right min-w-[90px] bg-sky-100 font-bold" data-group="cost">Total Cost</th>
                       </>
                     )}
 
                     {visibleGroups.srp && (
                       <>
-                        {hasData.srp_usd && <th className="px-2 py-2 text-right min-w-[100px] bg-violet-50">SRP $</th>}
-                        {hasData.srp_eur && <th className="px-2 py-2 text-right min-w-[100px] bg-violet-50">SRP &euro;</th>}
-                        <th className="px-2 py-2 text-right min-w-[100px] bg-violet-50 border-r border-gray-300">SRP &#3647;</th>
+                        {hasData.srp_usd && <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-violet-50 cursor-pointer hover:bg-violet-100" data-group="srp" onClick={() => { setBulkEdit({ field: "srp_usd", label: "SRP USD", type: "number" }); setBulkValue(""); }}>SRP $</th>}
+                        {hasData.srp_eur && <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-violet-50 cursor-pointer hover:bg-violet-100" data-group="srp" onClick={() => { setBulkEdit({ field: "srp_eur", label: "SRP EUR", type: "number" }); setBulkValue(""); }}>SRP &euro;</th>}
+                        <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-violet-50" data-group="srp">SRP &#3647;</th>
                       </>
                     )}
 
                     {visibleGroups.pricing && (
                       <>
-                        <th className="px-2 py-2 text-right bg-green-50 min-w-[100px]">Suggested</th>
-                        <th className="px-2 py-2 text-right bg-emerald-200 font-bold text-emerald-900 min-w-[110px]">Our Price</th>
-                        <th className="px-2 py-2 text-right bg-green-50 min-w-[80px]">Margin</th>
+                        <th className="px-1.5 py-1.5 text-right bg-green-50 min-w-[90px]" data-group="pricing">Suggested</th>
+                        <th className="px-1.5 py-1.5 text-right bg-emerald-200 font-bold text-emerald-900 min-w-[90px] cursor-pointer hover:bg-emerald-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "our_price_thb", label: "Our Price (THB)", type: "number" }); setBulkValue(""); }}>Our Price</th>
+                        <th className="px-1.5 py-1.5 text-right bg-green-50 min-w-[60px]" data-group="pricing">Margin</th>
                       </>
                     )}
 
                     {channels.map((ch, ci) => (
                       visibleGroups[ch.name] ? (
                         <React.Fragment key={ch.name}>
-                          <th className={`px-1 py-1 text-center border-l border-gray-300 min-w-[100px] ${chHeaderBg(ci)}`}>
-                            <div className="flex flex-col items-center gap-0.5">
-                              <span className="text-xs">Promo</span>
+                          <th className={`px-1 py-1 text-center min-w-[60px] ${chHeaderBg(ci)}`} data-group={ch.name}>
                               <select
                                 value={ch.promo_pct}
                                 onChange={(e) => {
@@ -669,38 +973,54 @@ export default function BrandPage() {
                                   <option key={v} value={v}>{v}%</option>
                                 ))}
                               </select>
-                            </div>
                           </th>
-                          <th className={`px-2 py-2 text-right min-w-[100px] ${chHeaderBg(ci)}`}>GP {ch.gp_pct + ch.pc_pct + ch.dc_pct}%</th>
-                          <th className={`px-2 py-2 text-right min-w-[100px] ${chHeaderBg(ci)}`}>Profit &#3647;</th>
-                          <th className={`px-2 py-2 text-right min-w-[80px] ${chHeaderBg(ci)}`}>Profit %</th>
+                          <th className={`px-1.5 py-1.5 text-right min-w-[70px] ${chHeaderBg(ci)}`} data-group={ch.name}>GP {ch.gp_pct + ch.pc_pct + ch.dc_pct}%</th>
+                          <th className={`px-1.5 py-1.5 text-right min-w-[70px] whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>Profit&#3647;</th>
+                          <th className={`px-1.5 py-1.5 text-right min-w-[60px] whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>Profit%</th>
                         </React.Fragment>
                       ) : null
                     ))}
-                    <th className="px-2 py-2 w-8"></th>
+                    <th className="px-1.5 py-1.5 text-left min-w-[120px] bg-white">Last Edit</th>
+                    <th className="px-1 py-1.5 w-8 bg-white"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {calculated.map((p, i) => {
+                  {paginatedProducts.map((p, i) => {
                     const ourPrice = p.our_price_thb || p.suggested_price;
                     const margin =
                       ourPrice > 0
                         ? ((ourPrice - p.total_import_cost) / ourPrice) * 100
                         : 0;
+                    const rowNum = (safePage - 1) * perPage + i + 1;
+                    const isSelected = selectedRows.has(p.id);
 
                     return (
                       <tr
                         key={p.id}
-                        className="border-t border-gray-100 hover:bg-gray-50 transition-colors group"
+                        className={`group ${isSelected ? "row-highlight" : ""}`}
                       >
-                        {/* Frozen columns */}
-                        <td className="px-2 py-2 text-gray-700 sticky left-0 z-10 bg-white group-hover:bg-gray-50">{i + 1}</td>
-                        <td className="px-2 py-2 text-center sticky left-[40px] z-10 bg-white group-hover:bg-gray-50">
+                        {/* Product columns */}
+                        <td className="px-1 py-0.5 text-center bg-white w-[28px]" data-group="product">
+                          <Checkbox
+                            checked={isSelected}
+                            dark={isSelected}
+                            onChange={(c) => {
+                              setSelectedRows(prev => {
+                                const next = new Set(prev);
+                                if (c) next.add(p.id); else next.delete(p.id);
+                                return next;
+                              });
+                            }}
+                          />
+                        </td>
+                        <td className="px-1 py-0.5 text-center text-gray-500 bg-white w-[32px]" data-group="product">{rowNum}</td>
+                        <td className="p-0.5 text-center bg-white w-[50px]" data-group="product">
                           {p.image_url ? (
                             <img
                               src={p.image_url}
                               alt={p.name}
-                              className="w-10 h-10 object-contain rounded mx-auto"
+                              className="w-[42px] h-[42px] object-contain mx-auto cursor-pointer rounded hover:opacity-80 transition-opacity"
+                              onClick={() => setLightboxUrl(p.image_url!)}
                             />
                           ) : (
                             <label className="cursor-pointer">
@@ -717,171 +1037,65 @@ export default function BrandPage() {
                             </label>
                           )}
                         </td>
-                        <td className="px-2 py-1 sticky left-[92px] z-10 bg-white group-hover:bg-gray-50">
+                        <td className="px-1 py-0.5 bg-white min-w-[180px]" data-group="product">
                           <textarea
                             value={p.name}
                             rows={2}
                             onChange={(e) => handleProductUpdate(p.id, "name", e.target.value)}
-                            className="w-full bg-blue-50 border-0 p-0.5 rounded text-sm font-semibold text-gray-900 focus:ring-1 focus:ring-blue-400 resize-none leading-tight"
+                            className="w-full bg-transparent border-0 p-0 font-semibold text-gray-900 focus:ring-0 focus:outline-none focus:bg-blue-50 resize-none leading-tight"
                           />
-                          {p.last_edited_by && (
-                            <Tooltip content={
-                              <div className="space-y-1">
-                                <div className="font-medium">{p.last_edited_by}</div>
-                                {p.last_edited_at && (
-                                  <div className="text-gray-400">
-                                    {new Date(p.last_edited_at).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" })}
-                                  </div>
-                                )}
-                              </div>
-                            }>
-                              <span className="text-[10px] text-gray-400 cursor-default truncate max-w-[180px] block">
-                                {p.last_edited_by.split("@")[0]}
-                              </span>
-                            </Tooltip>
-                          )}
                         </td>
-                        <td className="px-2 py-2 sticky left-[292px] z-10 bg-white group-hover:bg-gray-50 border-r border-gray-100 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.1)]">
+                        {visibleGroups.sku && (
+                        <td className="px-1 py-0.5 bg-white min-w-[140px]" data-group="product">
                           <input
                             type="text"
                             value={p.sku}
                             onChange={(e) =>
                               handleProductUpdate(p.id, "sku", e.target.value)
                             }
-                            className="w-full bg-blue-50 border-0 p-0.5 rounded text-sm text-gray-700 focus:ring-1 focus:ring-blue-400"
+                            className="w-full bg-transparent border-0 p-0 text-gray-700 focus:ring-0 focus:outline-none focus:bg-blue-50"
                           />
                         </td>
+                        )}
 
                         {/* Scrollable columns */}
                         {visibleGroups.category && (
-                          <td className="px-2 py-2">
-                            {newCategoryFor === p.id ? (
-                              <input
-                                autoFocus
-                                type="text"
-                                placeholder="New category..."
-                                onBlur={(e) => {
-                                  if (e.target.value.trim()) handleProductUpdate(p.id, "category", e.target.value.trim());
-                                  setNewCategoryFor(null);
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    const v = (e.target as HTMLInputElement).value.trim();
-                                    if (v) handleProductUpdate(p.id, "category", v);
-                                    setNewCategoryFor(null);
-                                  }
-                                  if (e.key === "Escape") setNewCategoryFor(null);
-                                }}
-                                className="w-full bg-blue-50 border border-blue-300 p-0.5 rounded text-sm text-gray-700 focus:ring-1 focus:ring-blue-400"
-                              />
-                            ) : (
-                              <select
-                                value={p.category}
-                                onChange={(e) => {
-                                  if (e.target.value === "__new__") {
-                                    setNewCategoryFor(p.id);
-                                  } else {
-                                    handleProductUpdate(p.id, "category", e.target.value);
-                                  }
-                                }}
-                                className="w-full bg-blue-50 border-0 p-0.5 rounded text-sm text-gray-700 focus:ring-1 focus:ring-blue-400 cursor-pointer"
-                              >
-                                <option value="">-</option>
-                                {categories.map(c => (
-                                  <option key={c} value={c}>{c}</option>
-                                ))}
-                                {p.category && !categories.includes(p.category) && (
-                                  <option value={p.category}>{p.category}</option>
-                                )}
-                                <option value="__new__">+ New...</option>
-                              </select>
-                            )}
+                          <td className="px-1 py-0.5 bg-white min-w-[200px] w-[200px] max-w-[200px] relative" data-group="category">
+                            <CategoryCell
+                              value={p.category}
+                              categories={categories}
+                              onChange={(val) => handleProductUpdate(p.id, "category", val)}
+                              onDeleteCategory={handleDeleteCategory}
+                            />
                           </td>
                         )}
 
                         {visibleGroups.cost && (
                           <>
                             {hasData.fob_usd && (
-                            <td className="px-2 py-2 text-right bg-sky-50/40">
-                              <div className="flex items-center gap-0.5 bg-blue-50 rounded px-1 py-0.5 justify-end">
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={p.fob_usd || ""}
-                                  placeholder="-"
-                                  onChange={(e) =>
-                                    handleProductUpdate(p.id, "fob_usd", parseFloat(e.target.value) || 0)
-                                  }
-                                  className="w-16 bg-transparent border-0 p-0 text-sm text-right font-medium text-gray-800 focus:ring-0 focus:outline-none"
-                                />
-                                <span className="text-xs text-gray-500 font-medium">$</span>
-                              </div>
+                            <td className="px-1 py-0.5 text-right bg-sky-50" data-group="cost">
+                              <NumInput value={p.fob_usd || ""} step="0.01" placeholder="-" onChange={(v) => handleProductUpdate(p.id, "fob_usd", v)} className="w-full bg-transparent border-0 p-0 text-right font-medium text-gray-800 focus:ring-0 focus:outline-none focus:bg-blue-50" />
                             </td>
                             )}
                             {hasData.fob_eur && (
-                            <td className="px-2 py-2 text-right bg-sky-50/40">
-                              <div className="flex items-center gap-0.5 bg-blue-50 rounded px-1 py-0.5 justify-end">
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={p.fob_eur || ""}
-                                  placeholder="-"
-                                  onChange={(e) =>
-                                    handleProductUpdate(p.id, "fob_eur", parseFloat(e.target.value) || 0)
-                                  }
-                                  className="w-16 bg-transparent border-0 p-0 text-sm text-right font-medium text-gray-800 focus:ring-0 focus:outline-none"
-                                />
-                                <span className="text-xs text-gray-500 font-medium">&euro;</span>
-                              </div>
+                            <td className="px-1 py-0.5 text-right bg-sky-50" data-group="cost">
+                              <NumInput value={p.fob_eur || ""} step="0.01" placeholder="-" onChange={(v) => handleProductUpdate(p.id, "fob_eur", v)} className="w-full bg-transparent border-0 p-0 text-right font-medium text-gray-800 focus:ring-0 focus:outline-none focus:bg-blue-50" />
                             </td>
                             )}
-                            <td className="px-2 py-2 text-right text-gray-900 font-semibold whitespace-nowrap bg-sky-50/40">
-                              {fmt(p.fob_thb)}<span className="text-xs text-gray-500 ml-0.5">&#3647;</span>
+                            <td className="px-1 py-0.5 text-right text-gray-900 font-semibold whitespace-nowrap bg-sky-50" data-group="cost">
+                              {fmt(p.fob_thb)}
                             </td>
-                            <td className="px-2 py-2 text-right bg-sky-50/40">
-                              <div className="flex items-center gap-0.5 bg-blue-50 rounded px-1 py-0.5 justify-end">
-                                <input
-                                  type="number"
-                                  value={p.freight_do || ""}
-                                  placeholder="-"
-                                  onChange={(e) =>
-                                    handleProductUpdate(p.id, "freight_do", parseFloat(e.target.value) || 0)
-                                  }
-                                  className="w-14 bg-transparent border-0 p-0 text-sm text-right text-gray-700 focus:ring-0 focus:outline-none"
-                                />
-                                <span className="text-xs text-gray-500 font-medium">&#3647;</span>
-                              </div>
+                            <td className="px-1 py-0.5 text-right bg-sky-50" data-group="cost">
+                              <NumInput value={p.freight_do || ""} placeholder="-" onChange={(v) => handleProductUpdate(p.id, "freight_do", v)} className="w-full bg-transparent border-0 p-0 text-right text-gray-700 focus:ring-0 focus:outline-none focus:bg-blue-50" />
                             </td>
-                            <td className="px-2 py-2 text-right bg-sky-50/40">
-                              <div className="flex items-center gap-0.5 bg-blue-50 rounded px-1 py-0.5 justify-end">
-                                <input
-                                  type="number"
-                                  value={p.import_tax_pct || ""}
-                                  placeholder="5"
-                                  onChange={(e) =>
-                                    handleProductUpdate(p.id, "import_tax_pct", parseFloat(e.target.value) || 0)
-                                  }
-                                  className="w-10 bg-transparent border-0 p-0 text-sm text-right text-gray-700 focus:ring-0 focus:outline-none"
-                                />
-                                <span className="text-xs text-gray-500 font-medium">%</span>
-                              </div>
+                            <td className="px-1 py-0.5 text-right bg-sky-50" data-group="cost">
+                              <NumInput value={p.import_tax_pct || ""} placeholder="5" onChange={(v) => handleProductUpdate(p.id, "import_tax_pct", v)} className="w-full bg-transparent border-0 p-0 text-right text-gray-700 focus:ring-0 focus:outline-none focus:bg-blue-50" />
                             </td>
-                            <td className="px-2 py-2 text-right bg-sky-50/40">
-                              <div className="flex items-center gap-0.5 bg-blue-50 rounded px-1 py-0.5 justify-end">
-                                <input
-                                  type="number"
-                                  value={p.shipping_cost || ""}
-                                  placeholder="-"
-                                  onChange={(e) =>
-                                    handleProductUpdate(p.id, "shipping_cost", parseFloat(e.target.value) || 0)
-                                  }
-                                  className="w-14 bg-transparent border-0 p-0 text-sm text-right text-gray-700 focus:ring-0 focus:outline-none"
-                                />
-                                <span className="text-xs text-gray-500 font-medium">&#3647;</span>
-                              </div>
+                            <td className="px-1 py-0.5 text-right bg-sky-50" data-group="cost">
+                              <NumInput value={p.shipping_cost || ""} placeholder="-" onChange={(v) => handleProductUpdate(p.id, "shipping_cost", v)} className="w-full bg-transparent border-0 p-0 text-right text-gray-700 focus:ring-0 focus:outline-none focus:bg-blue-50" />
                             </td>
-                            <td className="px-2 py-2 text-right font-bold text-gray-900 border-r border-gray-100 whitespace-nowrap bg-sky-50/40">
-                              {fmt(p.total_import_cost)}<span className="text-xs text-gray-500 font-normal ml-0.5">&#3647;</span>
+                            <td className="px-1 py-0.5 text-right font-bold text-gray-900 whitespace-nowrap bg-sky-100" data-group="cost">
+                              {fmt(p.total_import_cost)}
                             </td>
                           </>
                         )}
@@ -889,41 +1103,17 @@ export default function BrandPage() {
                         {visibleGroups.srp && (
                           <>
                             {hasData.srp_usd && (
-                            <td className="px-2 py-2 text-right bg-violet-50/40">
-                              <div className="flex items-center gap-0.5 bg-blue-50 rounded px-1 py-0.5 justify-end">
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={p.srp_usd || ""}
-                                  placeholder="-"
-                                  onChange={(e) =>
-                                    handleProductUpdate(p.id, "srp_usd", parseFloat(e.target.value) || 0)
-                                  }
-                                  className="w-16 bg-transparent border-0 p-0 text-sm text-right font-medium text-gray-800 focus:ring-0 focus:outline-none"
-                                />
-                                <span className="text-xs text-gray-500 font-medium">$</span>
-                              </div>
+                            <td className="px-1 py-0.5 text-right bg-violet-50" data-group="srp">
+                              <NumInput value={p.srp_usd || ""} step="0.01" placeholder="-" onChange={(v) => handleProductUpdate(p.id, "srp_usd", v)} className="w-full bg-transparent border-0 p-0 text-right font-medium text-gray-800 focus:ring-0 focus:outline-none focus:bg-blue-50" />
                             </td>
                             )}
                             {hasData.srp_eur && (
-                            <td className="px-2 py-2 text-right bg-violet-50/40">
-                              <div className="flex items-center gap-0.5 bg-blue-50 rounded px-1 py-0.5 justify-end">
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={p.srp_eur || ""}
-                                  placeholder="-"
-                                  onChange={(e) =>
-                                    handleProductUpdate(p.id, "srp_eur", parseFloat(e.target.value) || 0)
-                                  }
-                                  className="w-16 bg-transparent border-0 p-0 text-sm text-right font-medium text-gray-800 focus:ring-0 focus:outline-none"
-                                />
-                                <span className="text-xs text-gray-500 font-medium">&euro;</span>
-                              </div>
+                            <td className="px-1 py-0.5 text-right bg-violet-50" data-group="srp">
+                              <NumInput value={p.srp_eur || ""} step="0.01" placeholder="-" onChange={(v) => handleProductUpdate(p.id, "srp_eur", v)} className="w-full bg-transparent border-0 p-0 text-right font-medium text-gray-800 focus:ring-0 focus:outline-none focus:bg-blue-50" />
                             </td>
                             )}
-                            <td className="px-2 py-2 text-right text-gray-900 font-semibold border-r border-gray-100 whitespace-nowrap bg-violet-50/40">
-                              {p.srp_thb > 0 ? <>{fmt(p.srp_thb)}<span className="text-xs text-gray-500 font-normal ml-0.5">&#3647;</span></> : "-"}
+                            <td className="px-1 py-0.5 text-right text-gray-900 font-semibold whitespace-nowrap bg-violet-50" data-group="srp">
+                              {p.srp_thb > 0 ? fmt(p.srp_thb) : "-"}
                             </td>
                           </>
                         )}
@@ -931,8 +1121,8 @@ export default function BrandPage() {
                         {/* Thai Pricing */}
                         {visibleGroups.pricing && (
                           <>
-                            <td className="px-2 py-1 text-right bg-green-50/50 whitespace-nowrap">
-                              <div className="text-xs text-gray-400">{fmt(p.raw_price)}<span className="ml-0.5">&#3647;</span></div>
+                            <td className="px-1 py-0.5 text-right bg-green-50 whitespace-nowrap" data-group="pricing">
+                              <div className="text-[11px] text-gray-400 leading-none">{fmt(p.raw_price)}</div>
                               <button
                                 onClick={() =>
                                   handleApplySuggested(p.id, p.suggested_price)
@@ -940,37 +1130,14 @@ export default function BrandPage() {
                                 className="text-gray-700 hover:text-green-700 hover:underline transition-colors font-medium"
                                 title="Click to apply"
                               >
-                                {fmt(p.suggested_price)}<span className="text-xs text-gray-500 ml-0.5">&#3647;</span>
+                                {fmt(p.suggested_price)}
                               </button>
                             </td>
-                            <td className="px-2 py-1 bg-emerald-100">
-                              <div className="flex items-center gap-1 border border-emerald-400 rounded-md bg-white px-2 py-1 justify-end">
-                                <input
-                                  type="number"
-                                  value={p.our_price_thb || ""}
-                                  placeholder={fmt(p.suggested_price)}
-                                  onChange={(e) =>
-                                    handleProductUpdate(
-                                      p.id,
-                                      "our_price_thb",
-                                      parseFloat(e.target.value) || 0
-                                    )
-                                  }
-                                  className="w-20 bg-emerald-50 border-0 p-0.5 rounded text-sm text-right font-bold text-emerald-900 focus:ring-0 focus:outline-none"
-                                />
-                                <span className="text-xs font-medium text-emerald-700">&#3647;</span>
-                              </div>
+                            <td className="px-1 py-0.5 bg-green-800" data-group="pricing">
+                              <NumInput value={p.our_price_thb || ""} placeholder={fmt(p.suggested_price)} onChange={(v) => handleProductUpdate(p.id, "our_price_thb", v)} className="w-full bg-transparent border-0 p-0 text-right font-bold text-white focus:ring-0 focus:outline-none focus:bg-green-700 placeholder:text-green-300" />
                             </td>
-                            <td className="px-2 py-2 text-right bg-green-50/50">
-                              <span
-                                className={`inline-block px-1.5 py-0.5 rounded text-xs font-semibold ${
-                                  margin >= 65
-                                    ? "bg-green-100 text-green-700"
-                                    : margin >= 55
-                                    ? "bg-yellow-100 text-yellow-700"
-                                    : "bg-red-100 text-red-700"
-                                }`}
-                              >
+                            <td className="px-1 py-0.5 text-right bg-green-50" data-group="pricing">
+                              <span className={`inline-block px-1 py-0 rounded text-xs font-semibold ${profitColor(margin)}`}>
                                 {fmtDec(margin)}%
                               </span>
                             </td>
@@ -983,24 +1150,20 @@ export default function BrandPage() {
                           const cp = calculateChannelProfit(ourPrice, p.total_import_cost, ch);
                           return (
                             <React.Fragment key={ch.name}>
-                              <td className={`px-2 py-2 text-right border-l whitespace-nowrap ${chBg(ci)}`}>
-                                <div className="font-medium text-gray-900">{fmt(cp.selling_price)}<span className="text-xs text-gray-500 ml-0.5">&#3647;</span></div>
+                              <td className={`px-1 py-0.5 text-right whitespace-nowrap ${chBg(ci)}`} data-group={ch.name}>
+                                <div className="font-medium text-gray-900">{fmt(cp.selling_price)}</div>
                                 {ch.promo_pct > 0 && (
-                                  <div className="text-xs text-red-500">-{ch.promo_pct}%</div>
+                                  <div className="text-[11px] text-red-500 leading-none">-{ch.promo_pct}%</div>
                                 )}
                               </td>
-                              <td className={`px-2 py-2 text-right whitespace-nowrap text-gray-700 ${chBg(ci)}`}>
-                                {fmt(cp.store_profit_thb)}<span className="text-xs text-gray-500 ml-0.5">&#3647;</span>
+                              <td className={`px-1 py-0.5 text-right whitespace-nowrap text-gray-700 ${chBg(ci)}`} data-group={ch.name}>
+                                {fmt(cp.store_profit_thb)}
                               </td>
-                              <td className={`px-2 py-2 text-right whitespace-nowrap font-semibold text-gray-900 ${chBg(ci)}`}>
-                                {fmt(cp.our_profit_thb)}<span className="text-xs text-gray-500 ml-0.5">&#3647;</span>
+                              <td className={`px-1 py-0.5 text-right whitespace-nowrap font-semibold text-gray-900 ${chBg(ci)}`} data-group={ch.name}>
+                                {fmt(cp.our_profit_thb)}
                               </td>
-                              <td className={`px-2 py-2 text-right ${chBg(ci)}`}>
-                                <span className={`inline-block px-1.5 py-0.5 rounded text-xs font-semibold ${
-                                  cp.our_profit_pct >= 20 ? "bg-green-100 text-green-700" :
-                                  cp.our_profit_pct >= 10 ? "bg-yellow-100 text-yellow-700" :
-                                  "bg-red-100 text-red-700"
-                                }`}>
+                              <td className={`px-1 py-0.5 text-right ${chBg(ci)}`} data-group={ch.name}>
+                                <span className={`inline-block px-1 py-0 rounded text-xs font-semibold ${profitColor(cp.our_profit_pct)}`}>
                                   {fmtDec(cp.our_profit_pct)}%
                                 </span>
                               </td>
@@ -1008,7 +1171,19 @@ export default function BrandPage() {
                           );
                         })}
 
-                        <td className="px-2 py-2">
+                        <td className="px-1 py-0.5 bg-white text-[11px] text-gray-400 min-w-[120px]">
+                          {p.last_edited_by && (
+                            <div>
+                              <div className="truncate">{p.last_edited_by.split("@")[0]}</div>
+                              {p.last_edited_at && (
+                                <div className="text-[10px] text-gray-300">
+                                  {new Date(p.last_edited_at).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "short" })}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-1 py-0.5 bg-white">
                           <button
                             onClick={() => handleDeleteProduct(p.id)}
                             className="text-gray-300 hover:text-red-500 transition-colors"
@@ -1022,9 +1197,118 @@ export default function BrandPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination */}
+            <div className="px-4 py-2.5 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-[13px]">
+              <div className="flex items-center gap-3 text-gray-500">
+                <span>{calculated.length} records</span>
+                {selectedRows.size > 0 && (
+                  <span className="text-blue-600 font-medium">{selectedRows.size} selected</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 text-gray-500">
+                  <span>Rows</span>
+                  <div className="flex bg-white rounded-md border border-gray-200 overflow-hidden">
+                    {PER_PAGE_OPTIONS.map(n => (
+                      <button
+                        key={n}
+                        onClick={() => { setPerPage(n); setCurrentPage(1); }}
+                        className={`px-2 py-1 min-w-[36px] transition-colors ${
+                          perPage === n
+                            ? "bg-gray-800 text-white font-medium"
+                            : "text-gray-600 hover:bg-gray-100"
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={safePage <= 1}
+                    className="px-1.5 py-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M11 3L6 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 3L6 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={safePage <= 1}
+                    className="px-1.5 py-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </button>
+                  <span className="px-2 text-gray-700 font-medium tabular-nums">
+                    {safePage} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={safePage >= totalPages}
+                    className="px-1.5 py-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={safePage >= totalPages}
+                    className="px-1.5 py-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M5 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M10 3v10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </main>
+
+      {/* Bulk Edit Modal */}
+      {bulkEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setBulkEdit(null)}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Bulk Edit: {bulkEdit.label}</h3>
+            <p className="text-sm text-gray-500 mb-4">Apply to all {products.length} products</p>
+            <input
+              autoFocus
+              type={bulkEdit.type}
+              value={bulkValue}
+              onChange={(e) => setBulkValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleBulkApply(); if (e.key === "Escape") setBulkEdit(null); }}
+              placeholder={`Enter ${bulkEdit.label}...`}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none mb-4"
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setBulkEdit(null)}
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkApply}
+                disabled={bulkValue === ""}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                Apply to All
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Lightbox */}
+      {lightboxUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setLightboxUrl(null)}>
+          <img
+            src={lightboxUrl}
+            alt="Product"
+            className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
     </div>
   );
 }

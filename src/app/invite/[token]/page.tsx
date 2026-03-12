@@ -86,9 +86,9 @@ export default function InvitePage() {
     );
   }
 
-  // Not logged in - show login page with return context
+  // Not logged in - show login page, redirect back here after sign-in
   if (!user) {
-    return <LoginPage />;
+    return <LoginPage redirectTo={`/invite/${token}`} />;
   }
 
   return (
