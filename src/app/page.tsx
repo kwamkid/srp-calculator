@@ -26,19 +26,27 @@ export default function Home() {
   const [newBrand, setNewBrand] = useState("");
   const [creating, setCreating] = useState(false);
   const [isAuthorized, setIsAuthorized] = useState<boolean | null>(null);
+  const [productCounts, setProductCounts] = useState<Record<string, number>>({});
 
   const fetchBrands = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     // Check if user is authorized (owns brands or is a team member)
-    const [brandsRes, memberRes] = await Promise.all([
+    const [brandsRes, memberRes, countsRes] = await Promise.all([
       supabase.from("brands").select("*").order("created_at", { ascending: false }),
       supabase.from("team_members").select("id").eq("member_user_id", user.id).limit(1),
+      supabase.from("products").select("brand_id").limit(10000),
     ]);
     const ownsBrands = (brandsRes.data || []).some(b => b.user_id === user.id);
     const isTeamMember = (memberRes.data || []).length > 0;
     setIsAuthorized(ownsBrands || isTeamMember);
     setBrands(brandsRes.data || []);
+    // Count products per brand
+    const counts: Record<string, number> = {};
+    for (const row of countsRes.data || []) {
+      counts[row.brand_id] = (counts[row.brand_id] || 0) + 1;
+    }
+    setProductCounts(counts);
     setLoading(false);
   }, [user]);
 
@@ -65,7 +73,7 @@ export default function Home() {
 
   const handleDeleteBrand = useCallback(
     async (id: string, name: string) => {
-      if (!confirm(`Delete brand "${name}" and all its products?`)) return;
+      if (!confirm(`ต้องการลบแบรนด์ "${name}" และสินค้าทั้งหมดใช่หรือไม่?`)) return;
       await supabase.from("brands").delete().eq("id", id);
       fetchBrands();
     },
@@ -217,6 +225,9 @@ export default function Home() {
                     <p className="text-xs text-gray-600 mt-1">
                       USD/THB: {brand.usd_to_thb} | EUR/THB:{" "}
                       {brand.eur_to_thb} | x{brand.default_multiplier}
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {productCounts[brand.id] || 0} products
                     </p>
                   </div>
                   <div className="flex items-center gap-2">

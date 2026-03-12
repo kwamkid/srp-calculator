@@ -22,7 +22,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { LoginPage } from "@/components/LoginPage";
 import { Tooltip } from "@/components/Tooltip";
 import { supabase } from "@/lib/supabase";
-import { calculateProduct, roundToNicePrice, calculateChannelProfit } from "@/lib/calculator";
+import { calculateProduct, roundToNicePrice, calculateChannelProfit, marginPct } from "@/lib/calculator";
 import { DEFAULT_OFFLINE_CHANNELS, DEFAULT_ONLINE_CHANNELS } from "@/lib/types";
 import type { Brand, Product, CalculatedProduct, SalesChannel, OfflineChannel, OnlineChannel, BrandMember } from "@/lib/types";
 import Link from "next/link";
@@ -61,6 +61,16 @@ function chGroupBg(idx: number) { return CHANNEL_GROUP_BG[idx % CHANNEL_GROUP_BG
 
 const PROMO_OPTIONS = [0, 5, 10, 15, 20, 25, 30];
 const PER_PAGE_OPTIONS = [25, 50, 100];
+const PAG_BTN = "px-1.5 py-1 rounded-full hover:bg-blue-50 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors";
+
+const DEFAULT_COL_WIDTHS: Record<string, number> = {
+  frozen: 290, sku: 140, category: 200,
+  fob_usd: 80, fob_eur: 80, fob_thb: 80, freight_do: 80, tax_pct: 60, shipping: 80, total_cost: 90,
+  srp_usd: 80, srp_eur: 80, srp_thb: 80,
+  suggested: 90, our_price: 90, margin: 60, platform: 90, plat_margin: 60,
+  ch_promo: 60, ch_fee: 70, ch_profit: 70, ch_pct: 60,
+  actions: 32, edited: 32,
+};
 
 function NumInput({ value, onChange, placeholder, className, step, decimals }: {
   value: number | string;
@@ -199,9 +209,9 @@ function CategoryCell({ value, categories, onChange, onDeleteCategory }: {
         {value ? (
           <span className="truncate text-gray-700 flex-1">{value}</span>
         ) : (
-          <span className="text-gray-300 text-[13px] flex-1">-</span>
+          <span className="text-gray-400 text-[13px] flex-1">Select...</span>
         )}
-        <ChevronDown className={`w-3 h-3 text-gray-300 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+        <ChevronDown className={`w-3.5 h-3.5 text-gray-500 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </div>
 
       {/* Dropdown */}
@@ -351,6 +361,62 @@ export default function BrandPage() {
     ...Object.fromEntries([...DEFAULT_OFFLINE_CHANNELS, ...DEFAULT_ONLINE_CHANNELS].map(ch => [ch.name, true])),
   });
 
+  // Sticky header: measure first row height for second row top offset
+  const [groupRowH, setGroupRowH] = useState(33);
+  const groupRowRef = useCallback((el: HTMLTableRowElement | null) => {
+    if (el) setGroupRowH(el.offsetHeight);
+  }, []);
+
+  // Resizable columns
+  const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS);
+  const resizing = useRef<{ col: string; startX: number; startW: number } | null>(null);
+
+  useEffect(() => {
+    if (!brandId) return;
+    try {
+      const saved = localStorage.getItem(`col-widths-${brandId}`);
+      if (saved) setColWidths(prev => ({ ...prev, ...JSON.parse(saved) }));
+    } catch { /* ignore */ }
+  }, [brandId]);
+
+  const saveColWidths = useCallback((widths: Record<string, number>) => {
+    if (!brandId) return;
+    localStorage.setItem(`col-widths-${brandId}`, JSON.stringify(widths));
+  }, [brandId]);
+
+  const onResizeStart = useCallback((col: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = colWidths[col] || DEFAULT_COL_WIDTHS[col] || 80;
+
+    const onMove = (ev: MouseEvent) => {
+      const newW = Math.max(40, startW + (ev.clientX - startX));
+      setColWidths(prev => ({ ...prev, [col]: newW }));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      setColWidths(prev => { saveColWidths(prev); return prev; });
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [colWidths, saveColWidths]);
+
+  const colW = (col: string) => colWidths[col] || DEFAULT_COL_WIDTHS[col] || 80;
+  const resizeHandle = (col: string) => (
+    <div
+      onMouseDown={(e) => onResizeStart(col, e)}
+      style={{ position: "absolute", right: -3, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 50 }}
+      onMouseOver={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = "rgba(96,165,250,0.5)"; }}
+      onMouseOut={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = ""; }}
+    />
+  );
+
   const toggleGroup = (group: string) => {
     setVisibleGroups(prev => ({ ...prev, [group]: !prev[group] }));
   };
@@ -490,32 +556,41 @@ export default function BrandPage() {
   );
 
   const handleApplySuggested = useCallback(
-    async (productId: string, suggestedPrice: number) => {
-      handleProductUpdate(productId, "our_price_thb", suggestedPrice);
+    (productId: string, suggestedPrice: number) => {
+      const editedBy = user?.email || "";
+      const editedAt = new Date().toISOString();
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, our_price_thb: suggestedPrice, platform_price_thb: suggestedPrice, last_edited_by: editedBy, last_edited_at: editedAt } : p))
+      );
+      const key = `${productId}_suggested`;
+      if (saveTimers.current[key]) clearTimeout(saveTimers.current[key]);
+      saveTimers.current[key] = setTimeout(async () => {
+        await supabase.from("products").update({ our_price_thb: suggestedPrice, platform_price_thb: suggestedPrice, last_edited_by: editedBy, last_edited_at: editedAt }).eq("id", productId);
+        delete saveTimers.current[key];
+      }, 400);
     },
-    [handleProductUpdate]
+    [user]
   );
 
   const handleApplyAllSuggested = useCallback(async () => {
     if (!brand) return;
     const updates = products.map((p) => {
       const calc = calculateProduct(p, brand);
-      return { id: p.id, our_price_thb: calc.suggested_price };
+      return { id: p.id, our_price_thb: calc.suggested_price, platform_price_thb: calc.suggested_price };
     });
 
     setProducts((prev) =>
       prev.map((p) => {
         const u = updates.find((x) => x.id === p.id);
-        return u ? { ...p, our_price_thb: u.our_price_thb } : p;
+        return u ? { ...p, our_price_thb: u.our_price_thb, platform_price_thb: u.platform_price_thb } : p;
       })
     );
 
-    for (const u of updates) {
-      await supabase
-        .from("products")
-        .update({ our_price_thb: u.our_price_thb })
-        .eq("id", u.id);
-    }
+    await Promise.all(
+      updates.map((u) =>
+        supabase.from("products").update({ our_price_thb: u.our_price_thb, platform_price_thb: u.platform_price_thb }).eq("id", u.id)
+      )
+    );
   }, [brand, products]);
 
   const handleGlobalMultiplier = useCallback(
@@ -695,7 +770,7 @@ export default function BrandPage() {
         "Margin (THB)": p.margin_thb,
         "Margin (%)": p.margin_pct,
         "Platform Price (THB)": platPrice,
-        "Platform Margin (%)": platPrice > 0 ? Math.round(((platPrice - p.total_import_cost) / platPrice) * 10000) / 100 : 0,
+        "Platform Margin (%)": marginPct(platPrice, p.total_import_cost),
       };
       // Offline channels
       for (const ch of offlineChannels) {
@@ -1012,84 +1087,134 @@ export default function BrandPage() {
               </div>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 220px)" }}>
               <style>{`.excel-grid th, .excel-grid td { outline: 1px solid #d1d5db; outline-offset: -0.5px; }
-.excel-grid thead tr:first-child th { outline-color: #374151; }
+.excel-grid thead tr:first-child th { position: sticky; top: 0; z-index: 5; outline-color: #374151; }
+.excel-grid thead tr:nth-child(2) th { position: sticky; z-index: 5; }
+.excel-grid thead tr:first-child th.frozen,
+.excel-grid thead tr:nth-child(2) th.frozen { z-index: 30; }
+.excel-grid tbody td { padding-top: 4px; padding-bottom: 4px; }
 .row-highlight td { background-color: #1e293b !important; }
 .row-highlight td, .row-highlight td * { color: #f1f5f9 !important; }
 .row-highlight td span[class*="bg-"], .row-highlight td div[class*="bg-"] { background-color: rgba(255,255,255,0.1) !important; }
-.row-highlight td input::placeholder, .row-highlight td textarea::placeholder { color: #64748b !important; }`}</style>
-              <table className="w-full border-separate excel-grid" style={{ borderSpacing: 0, fontSize: "14px" }}>
+.row-highlight td input::placeholder, .row-highlight td textarea::placeholder { color: #64748b !important; }
+.frozen { position: sticky; left: 0; z-index: 10; outline: none; border: 1px solid #d1d5db; }
+.frozen-last { box-shadow: 3px 0 6px rgba(0,0,0,0.1); clip-path: inset(0 -8px 0 0); }`}</style>
+              <table className="border-separate excel-grid" style={{ borderSpacing: 0, fontSize: "14px", tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: colW("frozen") }} />
+                  {visibleGroups.sku && <col style={{ width: colW("sku") }} />}
+                  {visibleGroups.category && <col style={{ width: colW("category") }} />}
+                  {visibleGroups.cost && <>
+                    {hasData.fob_usd && <col style={{ width: colW("fob_usd") }} />}
+                    {hasData.fob_eur && <col style={{ width: colW("fob_eur") }} />}
+                    <col style={{ width: colW("fob_thb") }} />
+                    <col style={{ width: colW("freight_do") }} />
+                    <col style={{ width: colW("tax_pct") }} />
+                    <col style={{ width: colW("shipping") }} />
+                    <col style={{ width: colW("total_cost") }} />
+                  </>}
+                  {visibleGroups.srp && <>
+                    {hasData.srp_usd && <col style={{ width: colW("srp_usd") }} />}
+                    {hasData.srp_eur && <col style={{ width: colW("srp_eur") }} />}
+                    <col style={{ width: colW("srp_thb") }} />
+                  </>}
+                  {visibleGroups.pricing && <>
+                    <col style={{ width: colW("suggested") }} />
+                    <col style={{ width: colW("our_price") }} />
+                    <col style={{ width: colW("margin") }} />
+                    <col style={{ width: colW("platform") }} />
+                    <col style={{ width: colW("plat_margin") }} />
+                  </>}
+                  {channels.map((ch) => (
+                    visibleGroups[ch.name] ? (
+                      <React.Fragment key={ch.name}>
+                        <col style={{ width: colW("ch_promo") }} />
+                        <col style={{ width: colW("ch_fee") }} />
+                        <col style={{ width: colW("ch_profit") }} />
+                        <col style={{ width: colW("ch_pct") }} />
+                      </React.Fragment>
+                    ) : null
+                  ))}
+                  <col style={{ width: 120 }} />
+                  <col style={{ width: 32 }} />
+                </colgroup>
                 <thead>
                   {/* Group header row */}
-                  <tr className="bg-gray-800 text-white text-sm">
-                    <th className="px-2 py-1.5 bg-gray-800" colSpan={visibleGroups.sku ? 5 : 4}>Product</th>
-                    {visibleGroups.category && <th className="px-2 py-1.5">Cat</th>}
-                    {visibleGroups.cost && <th className="px-2 py-1.5 text-center" colSpan={7 - (hasData.fob_usd ? 0 : 1) - (hasData.fob_eur ? 0 : 1)}>Cost</th>}
-                    {visibleGroups.srp && <th className="px-2 py-1.5 text-center" colSpan={3 - (hasData.srp_usd ? 0 : 1) - (hasData.srp_eur ? 0 : 1)}>SRP</th>}
-                    {visibleGroups.pricing && <th className="px-2 py-1.5 text-center bg-green-800" colSpan={4}>Pricing</th>}
+                  <tr ref={groupRowRef} className="bg-gray-800 text-white text-sm">
+                    <th className="px-2 py-1.5 bg-gray-800 frozen frozen-last" style={{ left: 0, width: colW("frozen"), minWidth: colW("frozen") }}>Product</th>
+                    {visibleGroups.sku && <th className="px-2 py-1.5 bg-gray-800">SKU</th>}
+                    {visibleGroups.category && <th className="px-2 py-1.5 bg-gray-800">Cat</th>}
+                    {visibleGroups.cost && <th className="px-2 py-1.5 text-center bg-gray-800" colSpan={7 - (hasData.fob_usd ? 0 : 1) - (hasData.fob_eur ? 0 : 1)}>Cost</th>}
+                    {visibleGroups.srp && <th className="px-2 py-1.5 text-center bg-gray-800" colSpan={3 - (hasData.srp_usd ? 0 : 1) - (hasData.srp_eur ? 0 : 1)}>SRP</th>}
+                    {visibleGroups.pricing && <th className="px-2 py-1.5 text-center bg-green-800" colSpan={5}>Pricing</th>}
                     {channels.map((ch, ci) => (
                       visibleGroups[ch.name] ? (
                         <th key={ch.name} className={`px-2 py-1.5 text-center ${chGroupBg(ci)}`} colSpan={4}>{ch.name}</th>
                       ) : null
                     ))}
-                    <th className="px-2 py-1.5 w-8" colSpan={2}></th>
+                    <th className="px-2 py-1.5 w-8 bg-gray-800" colSpan={2}></th>
                   </tr>
                   {/* Column header row */}
-                  <tr className="bg-gray-100 text-gray-700 font-semibold">
-                    <th className="px-1 py-1.5 text-center w-[28px] bg-gray-100" data-group="product">
-                      <Checkbox
-                        checked={paginatedProducts.length > 0 && paginatedProducts.every(p => selectedRows.has(p.id))}
-                        indeterminate={paginatedProducts.some(p => selectedRows.has(p.id)) && !paginatedProducts.every(p => selectedRows.has(p.id))}
-                        onChange={(c) => {
-                          if (c) setSelectedRows(new Set(paginatedProducts.map(p => p.id)));
-                          else setSelectedRows(new Set());
-                        }}
-                      />
+                  <tr className="bg-gray-100 text-gray-700 font-semibold" style={{ top: groupRowH }}>
+                    <th className="p-0 bg-gray-100 frozen frozen-last" style={{ left: 0, width: colW("frozen"), minWidth: colW("frozen") }} data-group="product">
+                      <div className="flex items-center h-full">
+                        <div className="w-[28px] flex-shrink-0 flex items-center justify-center border-r border-gray-300">
+                          <Checkbox
+                            checked={paginatedProducts.length > 0 && paginatedProducts.every(p => selectedRows.has(p.id))}
+                            indeterminate={paginatedProducts.some(p => selectedRows.has(p.id)) && !paginatedProducts.every(p => selectedRows.has(p.id))}
+                            onChange={(c) => {
+                              if (c) setSelectedRows(new Set(paginatedProducts.map(p => p.id)));
+                              else setSelectedRows(new Set());
+                            }}
+                          />
+                        </div>
+                        <div className="w-[32px] flex-shrink-0 text-center border-r border-gray-300">#</div>
+                        <div className="w-[50px] flex-shrink-0 text-center border-r border-gray-300">Img</div>
+                        <div className="flex-1 px-1.5 text-left">Product</div>
+                      </div>
+                      {resizeHandle("frozen")}
                     </th>
-                    <th className="px-1 py-1.5 text-center w-[32px] bg-gray-100" data-group="product">#</th>
-                    <th className="p-0.5 py-1.5 text-center w-[50px] bg-gray-100" data-group="product">Img</th>
-                    <th className="px-1.5 py-1.5 text-left min-w-[180px] bg-gray-100" data-group="product">Product</th>
-                    {visibleGroups.sku && <th className="px-1.5 py-1.5 text-left min-w-[140px] bg-gray-100" data-group="product">SKU</th>}
+                    {visibleGroups.sku && <th className="px-1.5 py-1.5 text-left bg-gray-100" style={{ width: colW("sku"), minWidth: 40 }} data-group="product">SKU{resizeHandle("sku")}</th>}
 
                     {visibleGroups.category && (
-                      <th className="px-1.5 py-1.5 text-left min-w-[200px] w-[200px] bg-white" data-group="category">Cat</th>
+                      <th className="px-1.5 py-1.5 text-left bg-white" style={{ width: colW("category"), minWidth: 40 }} data-group="category">Cat{resizeHandle("category")}</th>
                     )}
 
                     {visibleGroups.cost && (
                       <>
-                        {hasData.fob_usd && <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "fob_usd", label: "FOB USD", type: "number" }); setBulkValue(""); }}>FOB $</th>}
-                        {hasData.fob_eur && <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "fob_eur", label: "FOB EUR", type: "number" }); setBulkValue(""); }}>FOB &euro;</th>}
-                        <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50" data-group="cost">FOB &#3647;</th>
-                        <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "freight_do", label: "Freight+D/O", type: "number" }); setBulkValue(""); }}>Freight+D/O</th>
-                        <th className="px-1.5 py-1.5 text-right min-w-[60px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "import_tax_pct", label: "Import Tax %", type: "number" }); setBulkValue(""); }}>Tax %</th>
-                        <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-sky-50 cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "shipping_cost", label: "Shipping Cost", type: "number" }); setBulkValue(""); }}>Shipping</th>
-                        <th className="px-1.5 py-1.5 text-right min-w-[90px] bg-sky-100 font-bold" data-group="cost">Total Cost</th>
+                        {hasData.fob_usd && <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("fob_usd"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "fob_usd", label: "FOB USD", type: "number" }); setBulkValue(""); }}>FOB ${resizeHandle("fob_usd")}</th>}
+                        {hasData.fob_eur && <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("fob_eur"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "fob_eur", label: "FOB EUR", type: "number" }); setBulkValue(""); }}>FOB &euro;{resizeHandle("fob_eur")}</th>}
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50" style={{ width: colW("fob_thb"), minWidth: 40 }} data-group="cost">FOB &#3647;{resizeHandle("fob_thb")}</th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("freight_do"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "freight_do", label: "Freight+D/O", type: "number" }); setBulkValue(""); }}>Freight+D/O{resizeHandle("freight_do")}</th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("tax_pct"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "import_tax_pct", label: "Import Tax %", type: "number" }); setBulkValue(""); }}>Tax %{resizeHandle("tax_pct")}</th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("shipping"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "shipping_cost", label: "Shipping Cost", type: "number" }); setBulkValue(""); }}>Shipping{resizeHandle("shipping")}</th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-100 font-bold" style={{ width: colW("total_cost"), minWidth: 40 }} data-group="cost">Total Cost{resizeHandle("total_cost")}</th>
                       </>
                     )}
 
                     {visibleGroups.srp && (
                       <>
-                        {hasData.srp_usd && <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-violet-50 cursor-pointer hover:bg-violet-100" data-group="srp" onClick={() => { setBulkEdit({ field: "srp_usd", label: "SRP USD", type: "number" }); setBulkValue(""); }}>SRP $</th>}
-                        {hasData.srp_eur && <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-violet-50 cursor-pointer hover:bg-violet-100" data-group="srp" onClick={() => { setBulkEdit({ field: "srp_eur", label: "SRP EUR", type: "number" }); setBulkValue(""); }}>SRP &euro;</th>}
-                        <th className="px-1.5 py-1.5 text-right min-w-[80px] bg-violet-50" data-group="srp">SRP &#3647;</th>
+                        {hasData.srp_usd && <th className="px-1.5 py-1.5 text-right bg-violet-50 cursor-pointer hover:bg-violet-100" style={{ width: colW("srp_usd"), minWidth: 40 }} data-group="srp" onClick={() => { setBulkEdit({ field: "srp_usd", label: "SRP USD", type: "number" }); setBulkValue(""); }}>SRP ${resizeHandle("srp_usd")}</th>}
+                        {hasData.srp_eur && <th className="px-1.5 py-1.5 text-right bg-violet-50 cursor-pointer hover:bg-violet-100" style={{ width: colW("srp_eur"), minWidth: 40 }} data-group="srp" onClick={() => { setBulkEdit({ field: "srp_eur", label: "SRP EUR", type: "number" }); setBulkValue(""); }}>SRP &euro;{resizeHandle("srp_eur")}</th>}
+                        <th className="px-1.5 py-1.5 text-right bg-violet-50" style={{ width: colW("srp_thb"), minWidth: 40 }} data-group="srp">SRP &#3647;{resizeHandle("srp_thb")}</th>
                       </>
                     )}
 
                     {visibleGroups.pricing && (
                       <>
-                        <th className="px-1.5 py-1.5 text-right bg-green-50 min-w-[90px]" data-group="pricing">Suggested</th>
-                        <th className="px-1.5 py-1.5 text-right bg-emerald-200 font-bold text-emerald-900 min-w-[90px] cursor-pointer hover:bg-emerald-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "our_price_thb", label: "Our Price (THB)", type: "number" }); setBulkValue(""); }}>Our Price</th>
-                        <th className="px-1.5 py-1.5 text-right bg-green-50 min-w-[60px]" data-group="pricing">Margin</th>
-                        <th className="px-1.5 py-1.5 text-right bg-orange-200 font-bold text-orange-900 min-w-[90px] cursor-pointer hover:bg-orange-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "platform_price_thb", label: "Platform Price (THB)", type: "number" }); setBulkValue(""); }}>Platform</th>
-                        <th className="px-1.5 py-1.5 text-right bg-orange-50 min-w-[60px]" data-group="pricing">Margin</th>
+                        <th className="px-1.5 py-1.5 text-right bg-green-50" style={{ width: colW("suggested"), minWidth: 40 }} data-group="pricing">Suggested{resizeHandle("suggested")}</th>
+                        <th className="px-1.5 py-1.5 text-right bg-emerald-200 font-bold text-emerald-900 cursor-pointer hover:bg-emerald-300" style={{ width: colW("our_price"), minWidth: 40 }} data-group="pricing" onClick={() => { setBulkEdit({ field: "our_price_thb", label: "Our Price (THB)", type: "number" }); setBulkValue(""); }}>Our Price{resizeHandle("our_price")}</th>
+                        <th className="px-1.5 py-1.5 text-right bg-green-50" style={{ width: colW("margin"), minWidth: 40 }} data-group="pricing">Margin{resizeHandle("margin")}</th>
+                        <th className="px-1.5 py-1.5 text-right bg-orange-200 font-bold text-orange-900 cursor-pointer hover:bg-orange-300" style={{ width: colW("platform"), minWidth: 40 }} data-group="pricing" onClick={() => { setBulkEdit({ field: "platform_price_thb", label: "Platform Price (THB)", type: "number" }); setBulkValue(""); }}>Platform{resizeHandle("platform")}</th>
+                        <th className="px-1.5 py-1.5 text-right bg-orange-50" style={{ width: colW("plat_margin"), minWidth: 40 }} data-group="pricing">Margin{resizeHandle("plat_margin")}</th>
                       </>
                     )}
 
                     {channels.map((ch, ci) => (
                       visibleGroups[ch.name] ? (
                         <React.Fragment key={ch.name}>
-                          <th className={`px-1 py-1 text-center min-w-[60px] ${chHeaderBg(ci)}`} data-group={ch.name}>
+                          <th className={`px-1 py-1 text-center ${chHeaderBg(ci)}`} style={{ width: colW("ch_promo"), minWidth: 40 }} data-group={ch.name}>
                               <select
                                 value={ch.promo_pct}
                                 onChange={(e) => {
@@ -1103,12 +1228,14 @@ export default function BrandPage() {
                                   <option key={v} value={v}>{v}%</option>
                                 ))}
                               </select>
+                              {resizeHandle(`${ch.name}_promo`)}
                           </th>
-                          <th className={`px-1.5 py-1.5 text-right min-w-[70px] ${chHeaderBg(ci)}`} data-group={ch.name}>
+                          <th className={`px-1.5 py-1.5 text-right ${chHeaderBg(ci)}`} style={{ width: colW("ch_fee"), minWidth: 40 }} data-group={ch.name}>
                             {ch.type === "offline" ? `GP ${ch.gp_pct + ch.pc_pct + ch.dc_pct}%` : `Fee ${ch.commission_pct + ch.transaction_fee_pct + ch.service_fee_pct}%`}
+                            {resizeHandle(`${ch.name}_fee`)}
                           </th>
-                          <th className={`px-1.5 py-1.5 text-right min-w-[70px] whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>Profit&#3647;</th>
-                          <th className={`px-1.5 py-1.5 text-right min-w-[60px] whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>Profit%</th>
+                          <th className={`px-1.5 py-1.5 text-right whitespace-nowrap ${chHeaderBg(ci)}`} style={{ width: colW("ch_profit"), minWidth: 40 }} data-group={ch.name}>Profit&#3647;{resizeHandle(`${ch.name}_profit`)}</th>
+                          <th className={`px-1.5 py-1.5 text-right whitespace-nowrap ${chHeaderBg(ci)}`} style={{ width: colW("ch_pct"), minWidth: 40 }} data-group={ch.name}>Profit%{resizeHandle(`${ch.name}_pct`)}</th>
                         </React.Fragment>
                       ) : null
                     ))}
@@ -1119,10 +1246,9 @@ export default function BrandPage() {
                 <tbody>
                   {paginatedProducts.map((p, i) => {
                     const ourPrice = p.our_price_thb || p.suggested_price;
-                    const margin =
-                      ourPrice > 0
-                        ? ((ourPrice - p.total_import_cost) / ourPrice) * 100
-                        : 0;
+                    const margin = marginPct(ourPrice, p.total_import_cost);
+                    const platPrice = p.platform_price_thb || 0;
+                    const platMargin = marginPct(platPrice, p.total_import_cost);
                     const rowNum = (safePage - 1) * perPage + i + 1;
                     const isSelected = selectedRows.has(p.id);
 
@@ -1131,51 +1257,55 @@ export default function BrandPage() {
                         key={p.id}
                         className={`group ${isSelected ? "row-highlight" : ""}`}
                       >
-                        {/* Product columns */}
-                        <td className="px-1 py-0.5 text-center bg-white w-[28px]" data-group="product">
-                          <Checkbox
-                            checked={isSelected}
-                            dark={isSelected}
-                            onChange={(c) => {
-                              setSelectedRows(prev => {
-                                const next = new Set(prev);
-                                if (c) next.add(p.id); else next.delete(p.id);
-                                return next;
-                              });
-                            }}
-                          />
-                        </td>
-                        <td className="px-1 py-0.5 text-center text-gray-500 bg-white w-[32px]" data-group="product">{rowNum}</td>
-                        <td className="p-0.5 text-center bg-white w-[50px]" data-group="product">
-                          {p.image_url ? (
-                            <img
-                              src={p.image_url}
-                              alt={p.name}
-                              className="w-[42px] h-[42px] object-contain mx-auto cursor-pointer rounded hover:opacity-80 transition-opacity"
-                              onClick={() => setLightboxUrl(p.image_url!)}
-                            />
-                          ) : (
-                            <label className="cursor-pointer">
-                              <ImageIcon className="w-5 h-5 text-gray-300 mx-auto hover:text-blue-400 transition-colors" />
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(e) => {
-                                  const f = e.target.files?.[0];
-                                  if (f) handleImageUpload(p.id, f);
+                        {/* Product column (frozen) */}
+                        <td className="p-0 bg-white frozen frozen-last" style={{ left: 0, width: colW("frozen"), minWidth: colW("frozen") }} data-group="product">
+                          <div className="flex items-stretch">
+                            <div className="w-[28px] flex-shrink-0 flex items-center justify-center border-r border-gray-300">
+                              <Checkbox
+                                checked={isSelected}
+                                dark={isSelected}
+                                onChange={(c) => {
+                                  setSelectedRows(prev => {
+                                    const next = new Set(prev);
+                                    if (c) next.add(p.id); else next.delete(p.id);
+                                    return next;
+                                  });
                                 }}
                               />
-                            </label>
-                          )}
-                        </td>
-                        <td className="px-1 py-0.5 bg-white min-w-[180px]" data-group="product">
-                          <textarea
-                            value={p.name}
-                            rows={2}
-                            onChange={(e) => handleProductUpdate(p.id, "name", e.target.value)}
-                            className="w-full bg-transparent border-0 p-0 font-semibold text-gray-900 focus:ring-0 focus:outline-none focus:bg-blue-50 resize-none leading-tight"
-                          />
+                            </div>
+                            <div className="w-[32px] flex-shrink-0 text-center text-gray-500 border-r border-gray-300">{rowNum}</div>
+                            <div className="w-[50px] flex-shrink-0 flex items-center justify-center border-r border-gray-300">
+                              {p.image_url ? (
+                                <img
+                                  src={p.image_url}
+                                  alt={p.name}
+                                  className="w-[42px] h-[42px] object-contain cursor-pointer rounded hover:opacity-80 transition-opacity"
+                                  onClick={() => setLightboxUrl(p.image_url!)}
+                                />
+                              ) : (
+                                <label className="cursor-pointer">
+                                  <ImageIcon className="w-5 h-5 text-gray-300 hover:text-blue-400 transition-colors" />
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const f = e.target.files?.[0];
+                                      if (f) handleImageUpload(p.id, f);
+                                    }}
+                                  />
+                                </label>
+                              )}
+                            </div>
+                            <div className="flex-1 px-1 overflow-hidden">
+                              <textarea
+                                value={p.name}
+                                rows={2}
+                                onChange={(e) => handleProductUpdate(p.id, "name", e.target.value)}
+                                className="w-full bg-transparent border-0 p-0 font-semibold text-gray-900 focus:ring-0 focus:outline-none focus:bg-blue-50 resize-none leading-tight"
+                              />
+                            </div>
+                          </div>
                         </td>
                         {visibleGroups.sku && (
                         <td className="px-1 py-0.5 bg-white min-w-[140px]" data-group="product">
@@ -1276,17 +1406,11 @@ export default function BrandPage() {
                             <td className="px-1 py-0.5 bg-orange-600" data-group="pricing">
                               <NumInput value={p.platform_price_thb || ""} placeholder="-" onChange={(v) => handleProductUpdate(p.id, "platform_price_thb", v)} className="w-full bg-transparent border-0 p-0 text-right font-bold text-white focus:ring-0 focus:outline-none focus:bg-orange-700 placeholder:text-orange-300" />
                             </td>
-                            {(() => {
-                              const platPrice = p.platform_price_thb || 0;
-                              const platMargin = platPrice > 0 ? ((platPrice - p.total_import_cost) / platPrice) * 100 : 0;
-                              return (
-                                <td className="px-1 py-0.5 text-right bg-orange-50" data-group="pricing">
-                                  <span className={`inline-block px-1 py-0 rounded text-xs font-semibold ${profitColor(platMargin)}`}>
-                                    {platPrice > 0 ? `${fmtDec(platMargin)}%` : "-"}
-                                  </span>
-                                </td>
-                              );
-                            })()}
+                            <td className="px-1 py-0.5 text-right bg-orange-50" data-group="pricing">
+                              <span className={`inline-block px-1 py-0 rounded text-xs font-semibold ${profitColor(platMargin)}`}>
+                                {platPrice > 0 ? `${fmtDec(platMargin)}%` : "-"}
+                              </span>
+                            </td>
                           </>
                         )}
 
@@ -1347,23 +1471,21 @@ export default function BrandPage() {
 
             {/* Pagination */}
             <div className="px-4 py-2.5 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-[13px]">
-              <div className="flex items-center gap-3 text-gray-500">
-                <span>{calculated.length} records</span>
+              <div className="flex items-center gap-3">
+                <span className="text-gray-500">{calculated.length} records</span>
                 {selectedRows.size > 0 && (
                   <span className="text-blue-600 font-medium">{selectedRows.size} selected</span>
                 )}
-              </div>
-              <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1.5 text-gray-500">
                   <span>Rows</span>
-                  <div className="flex bg-white rounded-md border border-gray-200 overflow-hidden">
+                  <div className="flex bg-white rounded-full border border-gray-200 overflow-hidden">
                     {PER_PAGE_OPTIONS.map(n => (
                       <button
                         key={n}
                         onClick={() => { setPerPage(n); setCurrentPage(1); }}
-                        className={`px-2 py-1 min-w-[36px] transition-colors ${
+                        className={`px-2.5 py-1 min-w-[36px] transition-colors ${
                           perPage === n
-                            ? "bg-gray-800 text-white font-medium"
+                            ? "bg-blue-600 text-white font-medium"
                             : "text-gray-600 hover:bg-gray-100"
                         }`}
                       >
@@ -1372,40 +1494,40 @@ export default function BrandPage() {
                     ))}
                   </div>
                 </div>
+              </div>
 
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setCurrentPage(1)}
-                    disabled={safePage <= 1}
-                    className="px-1.5 py-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M11 3L6 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 3L6 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    disabled={safePage <= 1}
-                    className="px-1.5 py-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                  </button>
-                  <span className="px-2 text-gray-700 font-medium tabular-nums">
-                    {safePage} / {totalPages}
-                  </span>
-                  <button
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    disabled={safePage >= totalPages}
-                    className="px-1.5 py-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(totalPages)}
-                    disabled={safePage >= totalPages}
-                    className="px-1.5 py-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors"
-                  >
-                    <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M5 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M10 3v10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                  </button>
-                </div>
+              <div className="flex items-center gap-1 bg-white rounded-full border border-gray-200 px-1 py-0.5">
+                <button
+                  onClick={() => setCurrentPage(1)}
+                  disabled={safePage <= 1}
+                  className={PAG_BTN}
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M11 3L6 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 3L6 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                </button>
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                  className={PAG_BTN}
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+                <span className="px-2.5 py-0.5 bg-blue-600 text-white font-medium rounded-full tabular-nums min-w-[60px] text-center">
+                  {safePage} / {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={safePage >= totalPages}
+                  className={PAG_BTN}
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                </button>
+                <button
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={safePage >= totalPages}
+                  className={PAG_BTN}
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M5 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M10 3v10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                </button>
               </div>
             </div>
           </div>

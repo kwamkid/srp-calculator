@@ -1,5 +1,10 @@
 import type { Product, CalculatedProduct, Brand, SalesChannel, ChannelProfit } from "./types";
 
+export function marginPct(price: number, cost: number): number {
+  if (price <= 0) return 0;
+  return Math.round(((price - cost) / price) * 10000) / 100;
+}
+
 export function roundToNicePrice(raw: number): number {
   if (raw <= 0) return 0;
   if (raw >= 10000) {
@@ -9,8 +14,8 @@ export function roundToNicePrice(raw: number): number {
     // Round to nearest X90
     return Math.round((raw - 90) / 100) * 100 + 90;
   } else if (raw >= 100) {
-    // Round to nearest X99
-    return Math.round((raw - 99) / 100) * 100 + 99;
+    // Round to X49 or X99, round up past +20 in each 50-range
+    return Math.ceil((raw - 19) / 50) * 50 - 1;
   } else if (raw >= 10) {
     // Round to nearest X9
     return Math.round((raw - 9) / 10) * 10 + 9;
@@ -51,7 +56,6 @@ export function calculateProduct(
 
   // Margin
   const margin_thb = our_price - total_import_cost;
-  const margin_pct = our_price > 0 ? (margin_thb / our_price) * 100 : 0;
 
   return {
     ...product,
@@ -60,7 +64,7 @@ export function calculateProduct(
     srp_thb: Math.round(srp_thb * 100) / 100,
     raw_price: Math.round(rawPrice),
     suggested_price,
-    margin_pct: Math.round(margin_pct * 100) / 100,
+    margin_pct: marginPct(our_price, total_import_cost),
     margin_thb: Math.round(margin_thb * 100) / 100,
   };
 }
