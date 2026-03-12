@@ -62,17 +62,18 @@ function chGroupBg(idx: number) { return CHANNEL_GROUP_BG[idx % CHANNEL_GROUP_BG
 const PROMO_OPTIONS = [0, 5, 10, 15, 20, 25, 30];
 const PER_PAGE_OPTIONS = [25, 50, 100];
 
-function NumInput({ value, onChange, placeholder, className, step }: {
+function NumInput({ value, onChange, placeholder, className, step, decimals }: {
   value: number | string;
   onChange: (val: number) => void;
   placeholder?: string;
   className?: string;
   step?: string;
+  decimals?: number;
 }) {
   const [focused, setFocused] = useState(false);
   const [raw, setRaw] = useState("");
   const num = typeof value === "number" ? value : parseFloat(value as string) || 0;
-  const display = !focused && num ? fmt(num) : undefined;
+  const display = !focused && num ? (decimals ? fmtDec(num) : fmt(num)) : undefined;
 
   return (
     <input
@@ -1074,12 +1075,12 @@ export default function BrandPage() {
                           <>
                             {hasData.fob_usd && (
                             <td className="px-1 py-0.5 text-right bg-sky-50" data-group="cost">
-                              <NumInput value={p.fob_usd || ""} step="0.01" placeholder="-" onChange={(v) => handleProductUpdate(p.id, "fob_usd", v)} className="w-full bg-transparent border-0 p-0 text-right font-medium text-gray-800 focus:ring-0 focus:outline-none focus:bg-blue-50" />
+                              <NumInput value={p.fob_usd || ""} step="0.01" decimals={2} placeholder="-" onChange={(v) => handleProductUpdate(p.id, "fob_usd", v)} className="w-full bg-transparent border-0 p-0 text-right font-medium text-gray-800 focus:ring-0 focus:outline-none focus:bg-blue-50" />
                             </td>
                             )}
                             {hasData.fob_eur && (
                             <td className="px-1 py-0.5 text-right bg-sky-50" data-group="cost">
-                              <NumInput value={p.fob_eur || ""} step="0.01" placeholder="-" onChange={(v) => handleProductUpdate(p.id, "fob_eur", v)} className="w-full bg-transparent border-0 p-0 text-right font-medium text-gray-800 focus:ring-0 focus:outline-none focus:bg-blue-50" />
+                              <NumInput value={p.fob_eur || ""} step="0.01" decimals={2} placeholder="-" onChange={(v) => handleProductUpdate(p.id, "fob_eur", v)} className="w-full bg-transparent border-0 p-0 text-right font-medium text-gray-800 focus:ring-0 focus:outline-none focus:bg-blue-50" />
                             </td>
                             )}
                             <td className="px-1 py-0.5 text-right text-gray-900 font-semibold whitespace-nowrap bg-sky-50" data-group="cost">

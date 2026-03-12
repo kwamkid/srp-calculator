@@ -9,82 +9,77 @@ import { supabase } from "@/lib/supabase";
 import type { Invite } from "@/lib/types";
 import Image from "next/image";
 
+async function apiFetch(path: string, opts?: RequestInit) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  const res = await fetch(path, {
+    ...opts,
+    headers: { ...opts?.headers, Authorization: `Bearer ${token}` },
+  });
+  return res.json();
+}
+
 export default function InvitePage() {
   const { user, loading: authLoading } = useAuth();
   const params = useParams();
   const router = useRouter();
   const token = params.token as string;
 
-  const [status, setStatus] = useState<"loading" | "valid" | "expired" | "used" | "accepted" | "error">("loading");
+  const [status, setStatus] = useState<"loading" | "valid" | "expired" | "used" | "accepted" | "error" | "auth_error">("loading");
+  const [authError, setAuthError] = useState<string | null>(null);
   const [invite, setInvite] = useState<Invite | null>(null);
   const [brandName, setBrandName] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
   const autoAccepted = useRef(false);
 
-  // Check invite validity & fetch brand name
-  const checkInvite = useCallback(async () => {
-    const { data } = await supabase
-      .from("invites")
-      .select("*")
-      .eq("token", token)
-      .single();
-
-    if (!data) { setStatus("error"); return; }
-    if (data.used_by) { setStatus("used"); return; }
-    if (new Date(data.expires_at) < new Date()) { setStatus("expired"); return; }
-
-    setInvite(data);
-    setStatus("valid");
-
-    // Fetch brand name if invite has brand_id
-    if (data.brand_id) {
-      const { data: brand } = await supabase
-        .from("brands")
-        .select("name")
-        .eq("id", data.brand_id)
-        .single();
-      if (brand) setBrandName(brand.name);
+  // Check for OAuth error in URL (e.g. after failed Google sign-in)
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const errorDesc = url.searchParams.get("error_description");
+    if (errorDesc) {
+      setAuthError(decodeURIComponent(errorDesc));
+      setStatus("auth_error");
     }
+  }, []);
+
+  // Check invite validity via API route (no auth needed)
+  const checkInvite = useCallback(async () => {
+    if (status === "auth_error") return;
+    const res = await fetch(`/api/invites/check?token=${token}`);
+    const data = await res.json();
+
+    if (data.status === "error") { setStatus("error"); return; }
+    if (data.status === "used") { setStatus("used"); return; }
+    if (data.status === "expired") { setStatus("expired"); return; }
+
+    setInvite(data.invite);
+    setBrandName(data.brandName);
+    setStatus("valid");
   }, [token]);
 
   useEffect(() => {
     checkInvite();
   }, [checkInvite]);
 
-  // Accept invite
+  // Accept invite via API route
   const handleAcceptInvite = useCallback(async () => {
     if (!user || !invite) return;
     setAccepting(true);
 
-    // Mark invite as used
-    await supabase
-      .from("invites")
-      .update({ used_by: user.id, used_at: new Date().toISOString() })
-      .eq("token", token)
-      .is("used_by", null);
+    const res = await apiFetch("/api/invites/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
 
-    // Add to team_members
-    await supabase.from("team_members").upsert({
-      owner_id: invite.created_by,
-      member_user_id: user.id,
-      member_email: user.email || "",
-      invited_via: invite.id,
-    }, { onConflict: "owner_id,member_user_id" });
-
-    // Auto-grant brand access if specified
-    if (invite.brand_id && invite.role) {
-      await supabase.from("brand_members").upsert({
-        brand_id: invite.brand_id,
-        user_id: user.id,
-        role: invite.role,
-        granted_by: invite.created_by,
-      }, { onConflict: "brand_id,user_id" });
+    if (res.error) {
+      alert(`Failed to accept invite: ${res.error}`);
+      setAccepting(false);
+      return;
     }
 
     setStatus("accepted");
-    // Redirect to brand page if assigned, otherwise home
-    const dest = invite.brand_id ? `/brands/${invite.brand_id}` : "/";
-    setTimeout(() => router.push(dest), 1500);
+    setTimeout(() => router.push(res.redirect || "/"), 1500);
   }, [user, invite, token, router]);
 
   // Auto-accept when user signs in via OAuth redirect
@@ -104,6 +99,35 @@ export default function InvitePage() {
   }
 
   // Not logged in — show join page with sign-in
+  // Show auth error instead of looping back to sign-in
+  if (status === "auth_error") {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm">
+          <div className="flex items-center justify-center gap-3 mb-8">
+            <Image src="/amgo-logo.svg" alt="AMGO" width={40} height={40} />
+            <h1 className="text-2xl font-bold text-gray-900">SRP Calculator</h1>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 text-center">
+            <XCircle className="w-12 h-12 text-red-400 mx-auto mb-3" />
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">Sign-in Failed</h2>
+            <p className="text-sm text-gray-600 mb-2">{authError}</p>
+            <p className="text-xs text-gray-400 mb-4">Please contact the team owner to resolve this issue.</p>
+            <button
+              onClick={() => {
+                // Retry without error params
+                window.location.href = `/invite/${token}`;
+              }}
+              className="px-4 py-2 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
     return (
       <LoginPage

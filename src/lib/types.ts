@@ -41,6 +41,7 @@ export interface Invite {
   expires_at: string;
   created_at: string;
   brand_id: string | null;
+  brand_ids: string[];
   role: "viewer" | "editor" | null;
 }
 

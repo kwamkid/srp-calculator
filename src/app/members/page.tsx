@@ -23,6 +23,16 @@ import type { Brand, Invite, TeamMember, BrandMember, LoginHistory } from "@/lib
 import Link from "next/link";
 import Image from "next/image";
 
+async function apiFetch(path: string, opts?: RequestInit) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  const res = await fetch(path, {
+    ...opts,
+    headers: { ...opts?.headers, Authorization: `Bearer ${token}` },
+  });
+  return res.json();
+}
+
 export default function MembersPage() {
   const { user, loading: authLoading } = useAuth();
   const [brands, setBrands] = useState<Brand[]>([]);
@@ -33,24 +43,21 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const [creatingInvite, setCreatingInvite] = useState(false);
-  const [inviteBrandId, setInviteBrandId] = useState<string>("");
+  const [inviteBrandIds, setInviteBrandIds] = useState<string[]>([]);
   const [inviteRole, setInviteRole] = useState<"viewer" | "editor">("editor");
 
   const fetchData = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const [brandsRes, teamRes, bmRes, invitesRes, loginRes] = await Promise.all([
-      supabase.from("brands").select("*").eq("user_id", user.id).order("name"),
-      supabase.from("team_members").select("*").eq("owner_id", user.id),
-      supabase.from("brand_members").select("*"),
-      supabase.from("invites").select("*").eq("created_by", user.id).order("created_at", { ascending: false }),
-      supabase.from("login_history").select("*").order("login_at", { ascending: false }).limit(50),
+    const [membersData, invitesData] = await Promise.all([
+      apiFetch("/api/members"),
+      apiFetch("/api/invites"),
     ]);
-    setBrands(brandsRes.data || []);
-    setTeamMembers(teamRes.data || []);
-    setBrandMembers(bmRes.data || []);
-    setInvites(invitesRes.data || []);
-    setLoginHistory(loginRes.data || []);
+    setBrands(membersData.brands || []);
+    setTeamMembers(membersData.teamMembers || []);
+    setBrandMembers(membersData.brandMembers || []);
+    setLoginHistory(membersData.loginHistory || []);
+    setInvites(invitesData || []);
     setLoading(false);
   }, [user]);
 
@@ -61,55 +68,44 @@ export default function MembersPage() {
   const handleCreateInvite = useCallback(async () => {
     if (!user) return;
     setCreatingInvite(true);
-    await supabase.from("invites").insert({
-      created_by: user.id,
-      brand_id: inviteBrandId || null,
-      role: inviteBrandId ? inviteRole : null,
+    await apiFetch("/api/invites", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ brand_ids: inviteBrandIds, role: inviteBrandIds.length > 0 ? inviteRole : null }),
     });
     await fetchData();
     setCreatingInvite(false);
-  }, [user, fetchData, inviteBrandId, inviteRole]);
+  }, [user, fetchData, inviteBrandIds, inviteRole]);
 
   const handleDeleteInvite = useCallback(async (id: string) => {
-    await supabase.from("invites").delete().eq("id", id);
-    setInvites((prev) => prev.filter((inv) => inv.id !== id));
-  }, []);
-
-  const handleRemoveMember = useCallback(async (memberId: string, memberUserId: string) => {
-    // Remove team membership + all brand access
-    await Promise.all([
-      supabase.from("team_members").delete().eq("id", memberId),
-      supabase.from("brand_members").delete().eq("user_id", memberUserId),
-    ]);
-    fetchData();
+    const res = await apiFetch(`/api/invites?id=${id}`, { method: "DELETE" });
+    if (res.error) {
+      alert(`Failed to delete invite: ${res.error}`);
+      return;
+    }
+    await fetchData();
   }, [fetchData]);
 
-  const handleToggleBrandAccess = useCallback(async (memberUserId: string, brandId: string, currentRole: string | null) => {
-    if (!user) return;
-    if (currentRole === null) {
-      // Grant viewer access
-      await supabase.from("brand_members").insert({
-        brand_id: brandId,
-        user_id: memberUserId,
-        role: "viewer",
-        granted_by: user.id,
-      });
-    } else if (currentRole === "viewer") {
-      // Upgrade to editor
-      await supabase.from("brand_members")
-        .update({ role: "editor" })
-        .eq("brand_id", brandId)
-        .eq("user_id", memberUserId);
-    } else {
-      // Remove access
-      await supabase.from("brand_members")
-        .delete()
-        .eq("brand_id", brandId)
-        .eq("user_id", memberUserId);
+  const handleRemoveMember = useCallback(async (memberId: string, memberUserId: string) => {
+    const res = await apiFetch(`/api/members?id=${memberId}&user_id=${memberUserId}`, { method: "DELETE" });
+    if (res.error) {
+      alert(`Failed to remove member: ${res.error}`);
     }
-    // Refresh brand_members
-    const { data } = await supabase.from("brand_members").select("*");
-    setBrandMembers(data || []);
+    await fetchData();
+  }, [fetchData]);
+
+  const handleSetBrandAccess = useCallback(async (memberUserId: string, brandId: string, action: "grant" | "revoke" | "set-role", role?: string) => {
+    if (!user) return;
+    const data = await apiFetch("/api/members/brand-access", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memberUserId, brandId, action, role }),
+    });
+    if (data.error) {
+      alert(`Failed to update access: ${data.error}`);
+      return;
+    }
+    setBrandMembers(data);
   }, [user]);
 
   const copyInviteLink = useCallback((token: string) => {
@@ -138,8 +134,7 @@ export default function MembersPage() {
 
   if (!user) return <LoginPage />;
 
-  const unusedInvites = invites.filter((inv) => !inv.used_by && new Date(inv.expires_at) > new Date());
-  const usedInvites = invites.filter((inv) => inv.used_by);
+  const activeInvites = invites.filter((inv) => !inv.used_by && new Date(inv.expires_at) > new Date());
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -159,105 +154,121 @@ export default function MembersPage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-6 space-y-6">
-        {/* Invite Links Section */}
+        {/* Create Invite */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-800">
-              <Link2 className="w-4 h-4" />
-              Invite Links
-            </h2>
-            <div className="flex items-center gap-2">
-              <select
-                value={inviteBrandId}
-                onChange={(e) => setInviteBrandId(e.target.value)}
-                className="px-2.5 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="">All brands</option>
-                {brands.map(b => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
-              {inviteBrandId && (
-                <select
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as "viewer" | "editor")}
-                  className="px-2.5 py-2 text-sm border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="editor">Editor</option>
-                  <option value="viewer">Viewer</option>
-                </select>
-              )}
-              <button
-                onClick={handleCreateInvite}
-                disabled={creatingInvite}
-                className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-              >
-                <UserPlus className="w-4 h-4" />
-                {creatingInvite ? "Creating..." : "Generate Link"}
-              </button>
-            </div>
-          </div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-4">
+            <UserPlus className="w-4 h-4" />
+            Create Invite Link
+          </h2>
 
-          {unusedInvites.length === 0 && usedInvites.length === 0 ? (
-            <p className="text-sm text-gray-500 py-3 text-center">No invite links yet. Generate a link to invite team members.</p>
-          ) : (
-            <div className="space-y-2">
-              {unusedInvites.map((inv) => {
-                const invBrand = brands.find(b => b.id === inv.brand_id);
+          {/* Brand selection */}
+          {brands.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <span className="text-xs text-gray-500 w-14 shrink-0">Brands:</span>
+              {brands.map(b => {
+                const checked = inviteBrandIds.includes(b.id);
                 return (
-                <div key={inv.id} className="flex items-center justify-between px-3 py-2.5 bg-blue-50 border border-blue-100 rounded-lg">
-                  <div className="flex-1 min-w-0">
-                    <code className="text-xs text-blue-800 font-mono truncate block">
-                      {typeof window !== "undefined" ? `${window.location.origin}/invite/${inv.token}` : inv.token}
-                    </code>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-blue-500">
-                        Expires {new Date(inv.expires_at).toLocaleDateString("th-TH")}
-                      </span>
-                      {invBrand && (
-                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                          inv.role === "editor" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
-                        }`}>
-                          {invBrand.name} &middot; {inv.role === "editor" ? "Edit" : "View"}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5 ml-3">
-                    <button
-                      onClick={() => copyInviteLink(inv.token)}
-                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded-md hover:bg-blue-50 transition-colors"
-                    >
-                      {copiedToken === inv.token ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copiedToken === inv.token ? "Copied!" : "Copy"}
-                    </button>
-                    <button
-                      onClick={() => handleDeleteInvite(inv.id)}
-                      className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
+                  <label key={b.id} className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${
+                    checked ? "bg-blue-50 border-blue-300 text-blue-700" : "bg-white border-gray-200 text-gray-500 hover:border-gray-300"
+                  }`}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        setInviteBrandIds(prev =>
+                          checked ? prev.filter(id => id !== b.id) : [...prev, b.id]
+                        );
+                      }}
+                      className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    {b.name}
+                  </label>
                 );
               })}
-              {usedInvites.map((inv) => (
-                <div key={inv.id} className="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-lg opacity-60">
-                  <div>
-                    <span className="text-xs text-gray-500 font-mono">{inv.token.slice(0, 16)}...</span>
-                    <span className="text-[10px] text-green-600 ml-2">Used {inv.used_at ? new Date(inv.used_at).toLocaleDateString("th-TH") : ""}</span>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteInvite(inv.id)}
-                    className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
             </div>
           )}
+
+          {/* Role + Generate */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500 w-14 shrink-0">Role:</span>
+            <select
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value as "viewer" | "editor")}
+              className="px-2.5 py-1.5 text-xs border border-gray-200 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="editor">Editor</option>
+              <option value="viewer">Viewer</option>
+            </select>
+            <button
+              onClick={handleCreateInvite}
+              disabled={creatingInvite}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors ml-auto"
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              {creatingInvite ? "Creating..." : "Generate Link"}
+            </button>
+          </div>
         </div>
+
+        {/* Active Invite Links */}
+        {activeInvites.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-gray-800 mb-3">
+              <Link2 className="w-4 h-4" />
+              Active Links
+              <span className="text-[10px] text-gray-400 font-normal">({activeInvites.length})</span>
+            </h2>
+            <div className="space-y-2">
+              {activeInvites.map((inv) => {
+                const ids = inv.brand_ids?.length ? inv.brand_ids : (inv.brand_id ? [inv.brand_id] : []);
+                const invBrands = brands.filter(b => ids.includes(b.id));
+                return (
+                  <div key={inv.id} className="px-3 py-2.5 bg-gray-50 border border-gray-100 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <code className="text-xs text-gray-700 font-mono truncate block flex-1 mr-3">
+                        {typeof window !== "undefined" ? `${window.location.origin}/invite/${inv.token}` : inv.token}
+                      </code>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          onClick={() => copyInviteLink(inv.token)}
+                          className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-blue-700 bg-white border border-blue-200 rounded-md hover:bg-blue-50 transition-colors"
+                        >
+                          {copiedToken === inv.token ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                          {copiedToken === inv.token ? "Copied!" : "Copy"}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteInvite(inv.id)}
+                          className="p-1 text-gray-300 hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                      {invBrands.length > 0 ? invBrands.map(b => (
+                        <span key={b.id} className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                          inv.role === "editor" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"
+                        }`}>
+                          {b.name}
+                        </span>
+                      )) : (
+                        <span className="text-[10px] text-gray-400">All brands</span>
+                      )}
+                      {inv.role && (
+                        <span className={`text-[10px] font-medium ${inv.role === "editor" ? "text-green-600" : "text-amber-600"}`}>
+                          {inv.role === "editor" ? "Editor" : "Viewer"}
+                        </span>
+                      )}
+                      <span className="text-[10px] text-gray-400 ml-auto">
+                        Expires {new Date(inv.expires_at).toLocaleDateString("th-TH")}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Team Members + Brand Access Matrix */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
@@ -329,29 +340,39 @@ export default function MembersPage() {
                         </td>
                         {brands.map((b) => {
                           const role = getMemberBrandRole(tm.member_user_id, b.id);
+                          const hasAccess = role !== null;
                           return (
                             <td key={b.id} className="py-2.5 px-2 text-center">
-                              <button
-                                onClick={() => handleToggleBrandAccess(tm.member_user_id, b.id, role)}
-                                className="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-1 rounded-full transition-colors"
-                                style={{
-                                  backgroundColor: role === "editor" ? "#dcfce7" : role === "viewer" ? "#fef3c7" : "#f3f4f6",
-                                  color: role === "editor" ? "#15803d" : role === "viewer" ? "#92400e" : "#9ca3af",
-                                }}
-                                title={
-                                  role === null ? "Click: grant View access"
-                                  : role === "viewer" ? "Click: upgrade to Edit"
-                                  : "Click: remove access"
-                                }
-                              >
-                                {role === "editor" ? (
-                                  <><Pencil className="w-3 h-3" /> Edit</>
-                                ) : role === "viewer" ? (
-                                  <><Eye className="w-3 h-3" /> View</>
-                                ) : (
-                                  <>No access</>
+                              <div className="flex flex-col items-center gap-1">
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={hasAccess}
+                                    onChange={() => {
+                                      if (hasAccess) {
+                                        handleSetBrandAccess(tm.member_user_id, b.id, "revoke");
+                                      } else {
+                                        handleSetBrandAccess(tm.member_user_id, b.id, "grant", "editor");
+                                      }
+                                    }}
+                                    className="sr-only peer"
+                                  />
+                                  <div className="w-8 h-[18px] bg-gray-200 rounded-full peer peer-checked:bg-green-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-[14px] after:w-[14px] after:transition-all peer-checked:after:translate-x-[14px]" />
+                                </label>
+                                {hasAccess && (
+                                  <select
+                                    value={role}
+                                    onChange={(e) => handleSetBrandAccess(tm.member_user_id, b.id, "set-role", e.target.value)}
+                                    className="text-[10px] font-medium px-1 py-0.5 rounded border border-gray-200 bg-white cursor-pointer focus:outline-none"
+                                    style={{
+                                      color: role === "editor" ? "#15803d" : "#92400e",
+                                    }}
+                                  >
+                                    <option value="editor">Editor</option>
+                                    <option value="viewer">Viewer</option>
+                                  </select>
                                 )}
-                              </button>
+                              </div>
                             </td>
                           );
                         })}
@@ -376,14 +397,7 @@ export default function MembersPage() {
           )}
 
           <div className="mt-3 flex items-center gap-4 text-[10px] text-gray-400 border-t border-gray-100 pt-3">
-            <span>Click to cycle:</span>
-            <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">No access</span>
-            <span>&rarr;</span>
-            <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full"><Eye className="w-3 h-3" /> View</span>
-            <span>&rarr;</span>
-            <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-2 py-0.5 rounded-full"><Pencil className="w-3 h-3" /> Edit</span>
-            <span>&rarr;</span>
-            <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-400 px-2 py-0.5 rounded-full">No access</span>
+            <span>Toggle switch to grant/revoke access. Change role with dropdown.</span>
           </div>
         </div>
 
