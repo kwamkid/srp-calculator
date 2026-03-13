@@ -152,10 +152,38 @@ export function parseExcel(
 ): ParsedProduct[] {
   const wb = XLSX.read(buffer, { type: "array" });
   const ws = wb.Sheets[wb.SheetNames[0]];
+
+  // If there are merged cells, unmerge them so sheet_to_json
+  // doesn't create duplicate/empty rows from merged regions
+  if (ws["!merges"]) {
+    for (const merge of ws["!merges"]) {
+      const topLeft = ws[XLSX.utils.encode_cell(merge.s)];
+      if (!topLeft) continue;
+      for (let r = merge.s.r; r <= merge.e.r; r++) {
+        for (let c = merge.s.c; c <= merge.e.c; c++) {
+          if (r === merge.s.r && c === merge.s.c) continue;
+          const addr = XLSX.utils.encode_cell({ r, c });
+          ws[addr] = { ...topLeft };
+        }
+      }
+    }
+    delete ws["!merges"];
+  }
+
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
     defval: "",
   });
-  return rowsToProducts(rows, defaultMultiplier);
+
+  const products = rowsToProducts(rows, defaultMultiplier);
+
+  // Deduplicate: same name + sku = duplicate
+  const seen = new Set<string>();
+  return products.filter(p => {
+    const key = `${p.name}|||${p.sku}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 export function parseTSV(

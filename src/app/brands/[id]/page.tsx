@@ -793,7 +793,7 @@ export default function BrandPage() {
               <select
                 value={brand.default_multiplier}
                 onChange={(e) => handleGlobalMultiplier(parseFloat(e.target.value))}
-                className="bg-transparent border-0 text-sm font-bold text-purple-700 focus:ring-0 cursor-pointer pr-6"
+                className="bg-white border-0 text-sm font-bold text-purple-700 focus:ring-0 cursor-pointer pr-6 rounded"
               >
                 <option value={2}>2.0</option>
                 <option value={2.5}>2.5</option>
@@ -1386,7 +1386,22 @@ export default function BrandPage() {
               <div className="flex items-center gap-3">
                 <span className="text-white/80">{calculated.length} records</span>
                 {selectedRows.size > 0 && (
-                  <span className="text-white font-bold">{selectedRows.size} selected</span>
+                  <>
+                    <span className="text-white font-bold">{selectedRows.size} selected</span>
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`ลบสินค้าที่เลือก ${selectedRows.size} รายการ?`)) return;
+                        const ids = [...selectedRows];
+                        await supabase.from("products").delete().in("id", ids);
+                        setProducts(prev => prev.filter(p => !selectedRows.has(p.id)));
+                        setSelectedRows(new Set());
+                      }}
+                      className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs font-medium rounded-full transition-colors flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      ลบที่เลือก
+                    </button>
+                  </>
                 )}
                 <div className="flex items-center gap-1.5 text-white/80">
                   <span>Rows</span>

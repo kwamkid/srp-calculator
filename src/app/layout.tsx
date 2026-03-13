@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Stokke SRP Calculator",
-  description: "Price calculator for Stokke products",
+  title: "แอพฯ คำนวนราคาขาย",
+  description: "แอพฯ คำนวนราคาขาย",
   icons: {
     icon: "/amgo-logo.svg",
   },
