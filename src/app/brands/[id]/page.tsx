@@ -61,16 +61,8 @@ function chGroupBg(idx: number) { return CHANNEL_GROUP_BG[idx % CHANNEL_GROUP_BG
 
 const PROMO_OPTIONS = [0, 5, 10, 15, 20, 25, 30];
 const PER_PAGE_OPTIONS = [25, 50, 100];
-const PAG_BTN = "px-1.5 py-1 rounded-full hover:bg-blue-50 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed text-gray-600 transition-colors";
+const PAG_BTN = "px-1.5 py-1 rounded-full hover:bg-white/20 disabled:opacity-30 disabled:cursor-not-allowed text-white transition-colors";
 
-const DEFAULT_COL_WIDTHS: Record<string, number> = {
-  frozen: 290, sku: 140, category: 200,
-  fob_usd: 80, fob_eur: 80, fob_thb: 80, freight_do: 80, tax_pct: 60, shipping: 80, total_cost: 90,
-  srp_usd: 80, srp_eur: 80, srp_thb: 80,
-  suggested: 90, our_price: 90, margin: 60, platform: 90, plat_margin: 60,
-  ch_promo: 60, ch_fee: 70, ch_profit: 70, ch_pct: 60,
-  actions: 32, edited: 32,
-};
 
 function NumInput({ value, onChange, placeholder, className, step, decimals }: {
   value: number | string;
@@ -367,55 +359,6 @@ export default function BrandPage() {
     if (el) setGroupRowH(el.offsetHeight);
   }, []);
 
-  // Resizable columns
-  const [colWidths, setColWidths] = useState<Record<string, number>>(DEFAULT_COL_WIDTHS);
-  const resizing = useRef<{ col: string; startX: number; startW: number } | null>(null);
-
-  useEffect(() => {
-    if (!brandId) return;
-    try {
-      const saved = localStorage.getItem(`col-widths-${brandId}`);
-      if (saved) setColWidths(prev => ({ ...prev, ...JSON.parse(saved) }));
-    } catch { /* ignore */ }
-  }, [brandId]);
-
-  const saveColWidths = useCallback((widths: Record<string, number>) => {
-    if (!brandId) return;
-    localStorage.setItem(`col-widths-${brandId}`, JSON.stringify(widths));
-  }, [brandId]);
-
-  const onResizeStart = useCallback((col: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX;
-    const startW = colWidths[col] || DEFAULT_COL_WIDTHS[col] || 80;
-
-    const onMove = (ev: MouseEvent) => {
-      const newW = Math.max(40, startW + (ev.clientX - startX));
-      setColWidths(prev => ({ ...prev, [col]: newW }));
-    };
-    const onUp = () => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      setColWidths(prev => { saveColWidths(prev); return prev; });
-    };
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, [colWidths, saveColWidths]);
-
-  const colW = (col: string) => colWidths[col] || DEFAULT_COL_WIDTHS[col] || 80;
-  const resizeHandle = (col: string) => (
-    <div
-      onMouseDown={(e) => onResizeStart(col, e)}
-      style={{ position: "absolute", right: -3, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 50 }}
-      onMouseOver={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = "rgba(96,165,250,0.5)"; }}
-      onMouseOut={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = ""; }}
-    />
-  );
 
   const toggleGroup = (group: string) => {
     setVisibleGroups(prev => ({ ...prev, [group]: !prev[group] }));
@@ -1089,7 +1032,7 @@ export default function BrandPage() {
 
             <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 220px)" }}>
               <style>{`.excel-grid th, .excel-grid td { outline: 1px solid #d1d5db; outline-offset: -0.5px; }
-.excel-grid thead tr:first-child th { position: sticky; top: 0; z-index: 5; outline-color: #374151; }
+.excel-grid thead tr:first-child th { position: sticky; top: 0; z-index: 5; outline-color: #e08a00; }
 .excel-grid thead tr:nth-child(2) th { position: sticky; z-index: 5; }
 .excel-grid thead tr:first-child th.frozen,
 .excel-grid thead tr:nth-child(2) th.frozen { z-index: 30; }
@@ -1100,64 +1043,26 @@ export default function BrandPage() {
 .row-highlight td input::placeholder, .row-highlight td textarea::placeholder { color: #64748b !important; }
 .frozen { position: sticky; left: 0; z-index: 10; outline: none; border: 1px solid #d1d5db; }
 .frozen-last { box-shadow: 3px 0 6px rgba(0,0,0,0.1); clip-path: inset(0 -8px 0 0); }`}</style>
-              <table className="border-separate excel-grid" style={{ borderSpacing: 0, fontSize: "14px", tableLayout: "fixed" }}>
-                <colgroup>
-                  <col style={{ width: colW("frozen") }} />
-                  {visibleGroups.sku && <col style={{ width: colW("sku") }} />}
-                  {visibleGroups.category && <col style={{ width: colW("category") }} />}
-                  {visibleGroups.cost && <>
-                    {hasData.fob_usd && <col style={{ width: colW("fob_usd") }} />}
-                    {hasData.fob_eur && <col style={{ width: colW("fob_eur") }} />}
-                    <col style={{ width: colW("fob_thb") }} />
-                    <col style={{ width: colW("freight_do") }} />
-                    <col style={{ width: colW("tax_pct") }} />
-                    <col style={{ width: colW("shipping") }} />
-                    <col style={{ width: colW("total_cost") }} />
-                  </>}
-                  {visibleGroups.srp && <>
-                    {hasData.srp_usd && <col style={{ width: colW("srp_usd") }} />}
-                    {hasData.srp_eur && <col style={{ width: colW("srp_eur") }} />}
-                    <col style={{ width: colW("srp_thb") }} />
-                  </>}
-                  {visibleGroups.pricing && <>
-                    <col style={{ width: colW("suggested") }} />
-                    <col style={{ width: colW("our_price") }} />
-                    <col style={{ width: colW("margin") }} />
-                    <col style={{ width: colW("platform") }} />
-                    <col style={{ width: colW("plat_margin") }} />
-                  </>}
-                  {channels.map((ch) => (
-                    visibleGroups[ch.name] ? (
-                      <React.Fragment key={ch.name}>
-                        <col style={{ width: colW("ch_promo") }} />
-                        <col style={{ width: colW("ch_fee") }} />
-                        <col style={{ width: colW("ch_profit") }} />
-                        <col style={{ width: colW("ch_pct") }} />
-                      </React.Fragment>
-                    ) : null
-                  ))}
-                  <col style={{ width: 120 }} />
-                  <col style={{ width: 32 }} />
-                </colgroup>
+              <table className="border-separate excel-grid" style={{ borderSpacing: 0, fontSize: "14px" }}>
                 <thead>
                   {/* Group header row */}
-                  <tr ref={groupRowRef} className="bg-gray-800 text-white text-sm">
-                    <th className="px-2 py-1.5 bg-gray-800 frozen frozen-last" style={{ left: 0, width: colW("frozen"), minWidth: colW("frozen") }}>Product</th>
-                    {visibleGroups.sku && <th className="px-2 py-1.5 bg-gray-800">SKU</th>}
-                    {visibleGroups.category && <th className="px-2 py-1.5 bg-gray-800">Cat</th>}
-                    {visibleGroups.cost && <th className="px-2 py-1.5 text-center bg-gray-800" colSpan={7 - (hasData.fob_usd ? 0 : 1) - (hasData.fob_eur ? 0 : 1)}>Cost</th>}
-                    {visibleGroups.srp && <th className="px-2 py-1.5 text-center bg-gray-800" colSpan={3 - (hasData.srp_usd ? 0 : 1) - (hasData.srp_eur ? 0 : 1)}>SRP</th>}
+                  <tr ref={groupRowRef} className="text-white text-sm" style={{ backgroundColor: "#f9a11b" }}>
+                    <th className="px-2 py-1.5 frozen frozen-last" style={{ left: 0, minWidth: 280, backgroundColor: "#f9a11b" }}>Product</th>
+                    {visibleGroups.sku && <th className="px-2 py-1.5" style={{ backgroundColor: "#f9a11b" }}>SKU</th>}
+                    {visibleGroups.category && <th className="px-2 py-1.5" style={{ backgroundColor: "#f9a11b" }}>Cat</th>}
+                    {visibleGroups.cost && <th className="px-2 py-1.5 text-center" style={{ backgroundColor: "#f9a11b" }} colSpan={7 - (hasData.fob_usd ? 0 : 1) - (hasData.fob_eur ? 0 : 1)}>Cost</th>}
+                    {visibleGroups.srp && <th className="px-2 py-1.5 text-center" style={{ backgroundColor: "#f9a11b" }} colSpan={3 - (hasData.srp_usd ? 0 : 1) - (hasData.srp_eur ? 0 : 1)}>SRP</th>}
                     {visibleGroups.pricing && <th className="px-2 py-1.5 text-center bg-green-800" colSpan={5}>Pricing</th>}
                     {channels.map((ch, ci) => (
                       visibleGroups[ch.name] ? (
                         <th key={ch.name} className={`px-2 py-1.5 text-center ${chGroupBg(ci)}`} colSpan={4}>{ch.name}</th>
                       ) : null
                     ))}
-                    <th className="px-2 py-1.5 w-8 bg-gray-800" colSpan={2}></th>
+                    <th className="px-2 py-1.5 w-8" style={{ backgroundColor: "#f9a11b" }} colSpan={2}></th>
                   </tr>
                   {/* Column header row */}
                   <tr className="bg-gray-100 text-gray-700 font-semibold" style={{ top: groupRowH }}>
-                    <th className="p-0 bg-gray-100 frozen frozen-last" style={{ left: 0, width: colW("frozen"), minWidth: colW("frozen") }} data-group="product">
+                    <th className="p-0 bg-gray-100 frozen frozen-last" style={{ left: 0, minWidth: 280 }} data-group="product">
                       <div className="flex items-center h-full">
                         <div className="w-[28px] flex-shrink-0 flex items-center justify-center border-r border-gray-300">
                           <Checkbox
@@ -1171,50 +1076,49 @@ export default function BrandPage() {
                         </div>
                         <div className="w-[32px] flex-shrink-0 text-center border-r border-gray-300">#</div>
                         <div className="w-[50px] flex-shrink-0 text-center border-r border-gray-300">Img</div>
-                        <div className="flex-1 px-1.5 text-left">Product</div>
+                        <div className="flex-1 px-1.5 text-left whitespace-nowrap">Product</div>
                       </div>
-                      {resizeHandle("frozen")}
                     </th>
-                    {visibleGroups.sku && <th className="px-1.5 py-1.5 text-left bg-gray-100" style={{ width: colW("sku"), minWidth: 40 }} data-group="product">SKU{resizeHandle("sku")}</th>}
+                    {visibleGroups.sku && <th className="px-1.5 py-1.5 text-left bg-gray-100 whitespace-nowrap" data-group="product">SKU</th>}
 
                     {visibleGroups.category && (
-                      <th className="px-1.5 py-1.5 text-left bg-white" style={{ width: colW("category"), minWidth: 40 }} data-group="category">Cat{resizeHandle("category")}</th>
+                      <th className="px-1.5 py-1.5 text-left bg-white whitespace-nowrap" data-group="category">Cat</th>
                     )}
 
                     {visibleGroups.cost && (
                       <>
-                        {hasData.fob_usd && <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("fob_usd"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "fob_usd", label: "FOB USD", type: "number" }); setBulkValue(""); }}>FOB ${resizeHandle("fob_usd")}</th>}
-                        {hasData.fob_eur && <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("fob_eur"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "fob_eur", label: "FOB EUR", type: "number" }); setBulkValue(""); }}>FOB &euro;{resizeHandle("fob_eur")}</th>}
-                        <th className="px-1.5 py-1.5 text-right bg-sky-50" style={{ width: colW("fob_thb"), minWidth: 40 }} data-group="cost">FOB &#3647;{resizeHandle("fob_thb")}</th>
-                        <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("freight_do"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "freight_do", label: "Freight+D/O", type: "number" }); setBulkValue(""); }}>Freight+D/O{resizeHandle("freight_do")}</th>
-                        <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("tax_pct"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "import_tax_pct", label: "Import Tax %", type: "number" }); setBulkValue(""); }}>Tax %{resizeHandle("tax_pct")}</th>
-                        <th className="px-1.5 py-1.5 text-right bg-sky-50 cursor-pointer hover:bg-sky-100" style={{ width: colW("shipping"), minWidth: 40 }} data-group="cost" onClick={() => { setBulkEdit({ field: "shipping_cost", label: "Shipping Cost", type: "number" }); setBulkValue(""); }}>Shipping{resizeHandle("shipping")}</th>
-                        <th className="px-1.5 py-1.5 text-right bg-sky-100 font-bold" style={{ width: colW("total_cost"), minWidth: 40 }} data-group="cost">Total Cost{resizeHandle("total_cost")}</th>
+                        {hasData.fob_usd && <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "fob_usd", label: "FOB USD", type: "number" }); setBulkValue(""); }}>FOB $</th>}
+                        {hasData.fob_eur && <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "fob_eur", label: "FOB EUR", type: "number" }); setBulkValue(""); }}>FOB &euro;</th>}
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap" data-group="cost">FOB &#3647;</th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "freight_do", label: "Freight+D/O", type: "number" }); setBulkValue(""); }}>Freight+D/O</th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "import_tax_pct", label: "Import Tax %", type: "number" }); setBulkValue(""); }}>Tax %</th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "shipping_cost", label: "Shipping Cost", type: "number" }); setBulkValue(""); }}>Shipping</th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-100 font-bold whitespace-nowrap" data-group="cost">Total Cost</th>
                       </>
                     )}
 
                     {visibleGroups.srp && (
                       <>
-                        {hasData.srp_usd && <th className="px-1.5 py-1.5 text-right bg-violet-50 cursor-pointer hover:bg-violet-100" style={{ width: colW("srp_usd"), minWidth: 40 }} data-group="srp" onClick={() => { setBulkEdit({ field: "srp_usd", label: "SRP USD", type: "number" }); setBulkValue(""); }}>SRP ${resizeHandle("srp_usd")}</th>}
-                        {hasData.srp_eur && <th className="px-1.5 py-1.5 text-right bg-violet-50 cursor-pointer hover:bg-violet-100" style={{ width: colW("srp_eur"), minWidth: 40 }} data-group="srp" onClick={() => { setBulkEdit({ field: "srp_eur", label: "SRP EUR", type: "number" }); setBulkValue(""); }}>SRP &euro;{resizeHandle("srp_eur")}</th>}
-                        <th className="px-1.5 py-1.5 text-right bg-violet-50" style={{ width: colW("srp_thb"), minWidth: 40 }} data-group="srp">SRP &#3647;{resizeHandle("srp_thb")}</th>
+                        {hasData.srp_usd && <th className="px-1.5 py-1.5 text-right bg-violet-50 whitespace-nowrap cursor-pointer hover:bg-violet-100" data-group="srp" onClick={() => { setBulkEdit({ field: "srp_usd", label: "SRP USD", type: "number" }); setBulkValue(""); }}>SRP $</th>}
+                        {hasData.srp_eur && <th className="px-1.5 py-1.5 text-right bg-violet-50 whitespace-nowrap cursor-pointer hover:bg-violet-100" data-group="srp" onClick={() => { setBulkEdit({ field: "srp_eur", label: "SRP EUR", type: "number" }); setBulkValue(""); }}>SRP &euro;</th>}
+                        <th className="px-1.5 py-1.5 text-right bg-violet-50 whitespace-nowrap" data-group="srp">SRP &#3647;</th>
                       </>
                     )}
 
                     {visibleGroups.pricing && (
                       <>
-                        <th className="px-1.5 py-1.5 text-right bg-green-50" style={{ width: colW("suggested"), minWidth: 40 }} data-group="pricing">Suggested{resizeHandle("suggested")}</th>
-                        <th className="px-1.5 py-1.5 text-right bg-emerald-200 font-bold text-emerald-900 cursor-pointer hover:bg-emerald-300" style={{ width: colW("our_price"), minWidth: 40 }} data-group="pricing" onClick={() => { setBulkEdit({ field: "our_price_thb", label: "Our Price (THB)", type: "number" }); setBulkValue(""); }}>Our Price{resizeHandle("our_price")}</th>
-                        <th className="px-1.5 py-1.5 text-right bg-green-50" style={{ width: colW("margin"), minWidth: 40 }} data-group="pricing">Margin{resizeHandle("margin")}</th>
-                        <th className="px-1.5 py-1.5 text-right bg-orange-200 font-bold text-orange-900 cursor-pointer hover:bg-orange-300" style={{ width: colW("platform"), minWidth: 40 }} data-group="pricing" onClick={() => { setBulkEdit({ field: "platform_price_thb", label: "Platform Price (THB)", type: "number" }); setBulkValue(""); }}>Platform{resizeHandle("platform")}</th>
-                        <th className="px-1.5 py-1.5 text-right bg-orange-50" style={{ width: colW("plat_margin"), minWidth: 40 }} data-group="pricing">Margin{resizeHandle("plat_margin")}</th>
+                        <th className="px-1.5 py-1.5 text-right bg-green-50 whitespace-nowrap" data-group="pricing">Suggested</th>
+                        <th className="px-1.5 py-1.5 text-right bg-emerald-200 font-bold text-emerald-900 whitespace-nowrap cursor-pointer hover:bg-emerald-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "our_price_thb", label: "Our Price (THB)", type: "number" }); setBulkValue(""); }}>Our Price</th>
+                        <th className="px-1.5 py-1.5 text-right bg-green-50 whitespace-nowrap" data-group="pricing">Margin</th>
+                        <th className="px-1.5 py-1.5 text-right bg-orange-200 font-bold text-orange-900 whitespace-nowrap cursor-pointer hover:bg-orange-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "platform_price_thb", label: "Platform Price (THB)", type: "number" }); setBulkValue(""); }}>Platform</th>
+                        <th className="px-1.5 py-1.5 text-right bg-orange-50 whitespace-nowrap" data-group="pricing">Margin</th>
                       </>
                     )}
 
                     {channels.map((ch, ci) => (
                       visibleGroups[ch.name] ? (
                         <React.Fragment key={ch.name}>
-                          <th className={`px-1 py-1 text-center ${chHeaderBg(ci)}`} style={{ width: colW("ch_promo"), minWidth: 40 }} data-group={ch.name}>
+                          <th className={`px-1 py-1 text-center whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>
                               <select
                                 value={ch.promo_pct}
                                 onChange={(e) => {
@@ -1228,18 +1132,16 @@ export default function BrandPage() {
                                   <option key={v} value={v}>{v}%</option>
                                 ))}
                               </select>
-                              {resizeHandle(`${ch.name}_promo`)}
                           </th>
-                          <th className={`px-1.5 py-1.5 text-right ${chHeaderBg(ci)}`} style={{ width: colW("ch_fee"), minWidth: 40 }} data-group={ch.name}>
+                          <th className={`px-1.5 py-1.5 text-right whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>
                             {ch.type === "offline" ? `GP ${ch.gp_pct + ch.pc_pct + ch.dc_pct}%` : `Fee ${ch.commission_pct + ch.transaction_fee_pct + ch.service_fee_pct}%`}
-                            {resizeHandle(`${ch.name}_fee`)}
                           </th>
-                          <th className={`px-1.5 py-1.5 text-right whitespace-nowrap ${chHeaderBg(ci)}`} style={{ width: colW("ch_profit"), minWidth: 40 }} data-group={ch.name}>Profit&#3647;{resizeHandle(`${ch.name}_profit`)}</th>
-                          <th className={`px-1.5 py-1.5 text-right whitespace-nowrap ${chHeaderBg(ci)}`} style={{ width: colW("ch_pct"), minWidth: 40 }} data-group={ch.name}>Profit%{resizeHandle(`${ch.name}_pct`)}</th>
+                          <th className={`px-1.5 py-1.5 text-right whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>Profit&#3647;</th>
+                          <th className={`px-1.5 py-1.5 text-right whitespace-nowrap ${chHeaderBg(ci)}`} data-group={ch.name}>Profit%</th>
                         </React.Fragment>
                       ) : null
                     ))}
-                    <th className="px-1.5 py-1.5 text-left min-w-[120px] bg-white">Last Edit</th>
+                    <th className="px-1.5 py-1.5 text-left whitespace-nowrap bg-white">Last Edit</th>
                     <th className="px-1 py-1.5 w-8 bg-white"></th>
                   </tr>
                 </thead>
@@ -1255,10 +1157,20 @@ export default function BrandPage() {
                     return (
                       <tr
                         key={p.id}
-                        className={`group ${isSelected ? "row-highlight" : ""}`}
+                        className={`group cursor-pointer ${isSelected ? "row-highlight" : ""}`}
+                        onClick={(e) => {
+                          const tag = (e.target as HTMLElement).tagName;
+                          const isEditable = (e.target as HTMLElement).closest("input, select, textarea, button, a, [contenteditable]");
+                          if (isEditable || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") return;
+                          setSelectedRows(prev => {
+                            const next = new Set(prev);
+                            if (next.has(p.id)) next.delete(p.id); else next.add(p.id);
+                            return next;
+                          });
+                        }}
                       >
                         {/* Product column (frozen) */}
-                        <td className="p-0 bg-white frozen frozen-last" style={{ left: 0, width: colW("frozen"), minWidth: colW("frozen") }} data-group="product">
+                        <td className="p-0 bg-white frozen frozen-last" style={{ left: 0, minWidth: 280 }} data-group="product">
                           <div className="flex items-stretch">
                             <div className="w-[28px] flex-shrink-0 flex items-center justify-center border-r border-gray-300">
                               <Checkbox
@@ -1470,23 +1382,23 @@ export default function BrandPage() {
             </div>
 
             {/* Pagination */}
-            <div className="px-4 py-2.5 border-t border-gray-200 bg-gray-50 flex items-center justify-between text-[13px]">
+            <div className="px-4 py-2.5 border-t text-white flex items-center justify-between text-[13px]" style={{ backgroundColor: "#f9a11b", borderColor: "#e08a00" }}>
               <div className="flex items-center gap-3">
-                <span className="text-gray-500">{calculated.length} records</span>
+                <span className="text-white/80">{calculated.length} records</span>
                 {selectedRows.size > 0 && (
-                  <span className="text-blue-600 font-medium">{selectedRows.size} selected</span>
+                  <span className="text-white font-bold">{selectedRows.size} selected</span>
                 )}
-                <div className="flex items-center gap-1.5 text-gray-500">
+                <div className="flex items-center gap-1.5 text-white/80">
                   <span>Rows</span>
-                  <div className="flex bg-white rounded-full border border-gray-200 overflow-hidden">
+                  <div className="flex rounded-full border border-white/30 overflow-hidden">
                     {PER_PAGE_OPTIONS.map(n => (
                       <button
                         key={n}
                         onClick={() => { setPerPage(n); setCurrentPage(1); }}
                         className={`px-2.5 py-1 min-w-[36px] transition-colors ${
                           perPage === n
-                            ? "bg-blue-600 text-white font-medium"
-                            : "text-gray-600 hover:bg-gray-100"
+                            ? "bg-white text-amber-700 font-medium"
+                            : "text-white hover:bg-white/20"
                         }`}
                       >
                         {n}
@@ -1496,22 +1408,22 @@ export default function BrandPage() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-1 bg-white rounded-full border border-gray-200 px-1 py-0.5">
+              <div className="flex items-center gap-1 rounded-full border border-white/30 px-1 py-0.5">
                 <button
                   onClick={() => setCurrentPage(1)}
                   disabled={safePage <= 1}
                   className={PAG_BTN}
                 >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M11 3L6 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 3L6 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M11 3L6 8l5 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M6 3L6 13" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
                 </button>
                 <button
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                   disabled={safePage <= 1}
                   className={PAG_BTN}
                 >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 </button>
-                <span className="px-2.5 py-0.5 bg-blue-600 text-white font-medium rounded-full tabular-nums min-w-[60px] text-center">
+                <span className="px-2.5 py-0.5 bg-white text-amber-700 font-medium rounded-full tabular-nums min-w-[60px] text-center">
                   {safePage} / {totalPages}
                 </span>
                 <button
@@ -1519,14 +1431,14 @@ export default function BrandPage() {
                   disabled={safePage >= totalPages}
                   className={PAG_BTN}
                 >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 </button>
                 <button
                   onClick={() => setCurrentPage(totalPages)}
                   disabled={safePage >= totalPages}
                   className={PAG_BTN}
                 >
-                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M5 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M10 3v10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="none"><path d="M5 3l5 5-5 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M10 3v10" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
                 </button>
               </div>
             </div>
