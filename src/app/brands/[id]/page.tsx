@@ -208,7 +208,7 @@ function CategoryCell({ value, categories, onChange, onDeleteCategory }: {
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute top-full left-0 z-50 mt-0.5 w-[240px] bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden">
+        <div className="cat-dropdown absolute top-full left-0 z-50 mt-0.5 w-[240px] bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden">
           {/* Search input */}
           <div className="p-1.5 border-b border-gray-100">
             <input
@@ -1041,6 +1041,8 @@ export default function BrandPage() {
 .row-highlight td, .row-highlight td * { color: #f1f5f9 !important; }
 .row-highlight td span[class*="bg-"], .row-highlight td div[class*="bg-"] { background-color: rgba(255,255,255,0.1) !important; }
 .row-highlight td input::placeholder, .row-highlight td textarea::placeholder { color: #64748b !important; }
+.row-highlight td .cat-dropdown, .row-highlight td .cat-dropdown * { color: initial !important; background-color: initial !important; }
+.row-highlight td .cat-dropdown { background-color: #fff !important; }
 .frozen { position: sticky; left: 0; z-index: 10; outline: none; border: 1px solid #d1d5db; }
 .frozen-last { box-shadow: 3px 0 6px rgba(0,0,0,0.1); clip-path: inset(0 -8px 0 0); }`}</style>
               <table className="border-separate excel-grid" style={{ borderSpacing: 0, fontSize: "14px" }}>
