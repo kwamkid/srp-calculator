@@ -1,6 +1,7 @@
 export interface Brand {
   id: string;
   name: string;
+  logo_url: string | null;
   user_id: string;
   usd_to_thb: number;
   eur_to_thb: number;

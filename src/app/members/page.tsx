@@ -202,7 +202,7 @@ export default function MembersPage() {
             <button
               onClick={handleCreateInvite}
               disabled={creatingInvite}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors ml-auto"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-900 bg-amber-400 rounded-lg hover:bg-amber-500 disabled:opacity-50 transition-colors ml-auto"
             >
               <Link2 className="w-3.5 h-3.5" />
               {creatingInvite ? "Creating..." : "Generate Link"}

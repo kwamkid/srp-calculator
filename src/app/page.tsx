@@ -151,7 +151,7 @@ export default function Home() {
           <h2 className="text-lg font-semibold text-gray-900">Brands</h2>
           <button
             onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-900 bg-amber-400 rounded-lg hover:bg-amber-500 transition-colors"
           >
             <Plus className="w-4 h-4" />
             New Brand
@@ -176,7 +176,7 @@ export default function Home() {
               <button
                 onClick={handleCreateBrand}
                 disabled={creating || !newBrand.trim()}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                className="px-4 py-2 text-sm font-medium text-gray-900 bg-amber-400 rounded-lg hover:bg-amber-500 disabled:opacity-50 transition-colors"
               >
                 {creating ? "Creating..." : "Create"}
               </button>
@@ -210,10 +210,18 @@ export default function Home() {
             {brands.map((brand) => (
               <div
                 key={brand.id}
-                className="bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-sm transition-all"
+                className="bg-white rounded-xl border border-gray-200 hover:border-amber-300 hover:shadow-sm transition-all"
               >
                 <div className="flex items-center justify-between px-5 py-4">
-                  <div>
+                  <div className="flex items-center gap-3">
+                    {brand.logo_url ? (
+                      <img src={brand.logo_url} alt={brand.name} className="w-10 h-10 rounded-full object-cover border border-gray-200" />
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-base border border-amber-200">
+                        {brand.name.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div>
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold text-gray-900">
                         {brand.name}
@@ -229,6 +237,7 @@ export default function Home() {
                     <p className="text-xs text-gray-400 mt-0.5">
                       {productCounts[brand.id] || 0} products
                     </p>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     {brand.user_id === user?.id && (
@@ -247,7 +256,7 @@ export default function Home() {
                     </Link>
                     <Link
                       href={`/brands/${brand.id}`}
-                      className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+                      className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-gray-900 bg-amber-400 rounded-lg hover:bg-amber-500 transition-colors"
                     >
                       View Prices
                       <ArrowRight className="w-4 h-4" />

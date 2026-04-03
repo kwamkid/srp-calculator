@@ -173,7 +173,7 @@ export default function InvitePage() {
               ) : (
                 <button
                   onClick={handleAcceptInvite}
-                  className="w-full py-2.5 px-4 bg-blue-600 text-white font-medium text-sm rounded-lg hover:bg-blue-700 transition-colors"
+                  className="w-full py-2.5 px-4 bg-amber-400 text-gray-900 font-medium text-sm rounded-lg hover:bg-amber-500 transition-colors"
                 >
                   Accept Invite
                 </button>

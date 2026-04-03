@@ -275,7 +275,7 @@ export default function UploadPage() {
           <div className="flex items-center justify-center gap-3">
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 transition-colors"
+              className="px-6 py-2.5 bg-amber-400 text-gray-900 rounded-lg font-medium text-sm hover:bg-amber-500 transition-colors"
             >
               Choose File
             </button>

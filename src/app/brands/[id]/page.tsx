@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
@@ -17,6 +18,7 @@ import {
   X,
   Plus,
   Check,
+  FileSpreadsheet,
 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { LoginPage } from "@/components/LoginPage";
@@ -26,7 +28,6 @@ import { calculateProduct, roundToNicePrice, calculateChannelProfit, marginPct }
 import { DEFAULT_OFFLINE_CHANNELS, DEFAULT_ONLINE_CHANNELS } from "@/lib/types";
 import type { Brand, Product, CalculatedProduct, SalesChannel, OfflineChannel, OnlineChannel, BrandMember } from "@/lib/types";
 import Link from "next/link";
-import Image from "next/image";
 import * as XLSX from "xlsx";
 
 function fmt(n: number): string {
@@ -165,24 +166,31 @@ function CategoryCell({ value, categories, onChange, onDeleteCategory }: {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-        setSearch("");
-        setDeleting(null);
-      }
+      const target = e.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setOpen(false);
+      setSearch("");
+      setDeleting(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
   useEffect(() => {
-    if (open) setTimeout(() => inputRef.current?.focus(), 0);
+    if (open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPos({ top: rect.bottom + 2, left: rect.left });
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
   }, [open]);
 
   const filtered = categories.filter(c =>
@@ -192,7 +200,7 @@ function CategoryCell({ value, categories, onChange, onDeleteCategory }: {
   const othersForReplace = categories.filter(c => c !== deleting);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={triggerRef} data-no-row-select>
       {/* Display */}
       <div
         className="flex items-center gap-1 cursor-pointer min-h-[24px]"
@@ -206,9 +214,13 @@ function CategoryCell({ value, categories, onChange, onDeleteCategory }: {
         <ChevronDown className={`w-3.5 h-3.5 text-gray-500 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
       </div>
 
-      {/* Dropdown */}
-      {open && (
-        <div className="cat-dropdown absolute top-full left-0 z-50 mt-0.5 w-[240px] bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden">
+      {/* Dropdown via portal — renders outside table so row-highlight CSS won't affect it */}
+      {open && createPortal(
+        <div
+          ref={dropdownRef}
+          className="fixed z-[9999] w-[240px] bg-white rounded-lg shadow-xl border border-gray-200 overflow-hidden"
+          style={{ top: pos.top, left: pos.left }}
+        >
           {/* Search input */}
           <div className="p-1.5 border-b border-gray-100">
             <input
@@ -231,7 +243,7 @@ function CategoryCell({ value, categories, onChange, onDeleteCategory }: {
                 if (e.key === "Escape") { setOpen(false); setSearch(""); }
               }}
               placeholder="Search or add..."
-              className="w-full text-[13px] px-2 py-1.5 bg-gray-50 border border-gray-200 rounded-md focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20 placeholder:text-gray-300"
+              className="w-full text-[13px] px-2 py-1.5 bg-gray-50 border border-gray-200 rounded-md focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400/20 placeholder:text-gray-300 text-gray-900"
             />
           </div>
 
@@ -315,7 +327,8 @@ function CategoryCell({ value, categories, onChange, onDeleteCategory }: {
               <div className="px-3 py-2 text-[13px] text-gray-400 text-center">No categories found</div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
@@ -337,7 +350,8 @@ export default function BrandPage() {
   const [myRole, setMyRole] = useState<"owner" | "editor" | "viewer">("viewer");
   const [bulkEdit, setBulkEdit] = useState<{ field: keyof Product; label: string; type: "number" | "text" } | null>(null);
   const [bulkValue, setBulkValue] = useState("");
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [platformPctOpen, setPlatformPctOpen] = useState(false);
+  const [platformPctValue, setPlatformPctValue] = useState("");
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
@@ -632,6 +646,33 @@ export default function BrandPage() {
     [brandId, handleProductUpdate]
   );
 
+  const handleLogoUpload = useCallback(async (file: File) => {
+    const compressed = await new Promise<Blob>((resolve) => {
+      const img = new window.Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 200;
+        canvas.height = 200;
+        const ctx = canvas.getContext("2d")!;
+        const size = Math.min(img.width, img.height);
+        const sx = (img.width - size) / 2;
+        const sy = (img.height - size) / 2;
+        ctx.drawImage(img, sx, sy, size, size, 0, 0, 200, 200);
+        canvas.toBlob((blob) => resolve(blob!), "image/jpeg", 0.85);
+      };
+      img.src = URL.createObjectURL(file);
+    });
+    const path = `logos/${brandId}.jpg`;
+    const { error } = await supabase.storage
+      .from("product-images")
+      .upload(path, compressed, { upsert: true, contentType: "image/jpeg" });
+    if (error) { console.error("Logo upload error:", error.message); return; }
+    const { data: { publicUrl } } = supabase.storage.from("product-images").getPublicUrl(path);
+    const logoUrl = `${publicUrl}?t=${Date.now()}`;
+    await supabase.from("brands").update({ logo_url: logoUrl }).eq("id", brandId);
+    setBrand((prev) => prev ? { ...prev, logo_url: logoUrl } : prev);
+  }, [brandId]);
+
   const canEdit = myRole === "owner" || myRole === "editor";
 
   // Save channel to DB (debounced via caller)
@@ -686,6 +727,130 @@ export default function BrandPage() {
     setBulkEdit(null);
     setBulkValue("");
   }, [bulkEdit, bulkValue, products, user]);
+
+  const handlePlatformPctApply = useCallback(async () => {
+    const pct = parseFloat(platformPctValue);
+    if (isNaN(pct)) return;
+    const editedBy = user?.email || "";
+    const editedAt = new Date().toISOString();
+    // Build a lookup from calculated to get the actual displayed Our Price (includes suggested_price fallback)
+    const priceMap = new Map(calculated.map((c) => [c.id, c.our_price_thb || c.suggested_price || 0]));
+    const updates: { id: string; platform_price_thb: number }[] = [];
+    setProducts((prev) =>
+      prev.map((p) => {
+        const ourPrice = priceMap.get(p.id) || p.our_price_thb || 0;
+        const newPlat = roundToNicePrice(ourPrice * (1 + pct / 100));
+        updates.push({ id: p.id, platform_price_thb: newPlat });
+        return { ...p, platform_price_thb: newPlat, last_edited_by: editedBy, last_edited_at: editedAt };
+      })
+    );
+    await Promise.all(
+      updates.map((u) =>
+        supabase.from("products").update({ platform_price_thb: u.platform_price_thb, last_edited_by: editedBy, last_edited_at: editedAt }).eq("id", u.id)
+      )
+    );
+    setPlatformPctOpen(false);
+    setPlatformPctValue("");
+  }, [platformPctValue, user, calculated]);
+
+  const handleExportPriceList = useCallback(async () => {
+    if (calculated.length === 0) return;
+    const ExcelJS = (await import("exceljs")).default;
+    const { saveAs } = await import("file-saver");
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("ใบราคา");
+
+    // Image = 70pt square; row height = 70pt so image fills the row exactly
+    const IMG_PT = 70;
+    const defaultFont = { name: "Tahoma", size: 14 };
+
+    // Header row
+    ws.columns = [
+      { header: "#", key: "no", width: 5 },
+      { header: "รูป", key: "image", width: 13 },
+      { header: "ชื่อสินค้า", key: "name", width: 40 },
+      { header: "SKU", key: "sku", width: 20 },
+      { header: "Our Price (฿)", key: "our_price", width: 15 },
+      { header: "Platform Price (฿)", key: "platform_price", width: 18 },
+    ];
+
+    // Style header
+    const headerRow = ws.getRow(1);
+    headerRow.font = { ...defaultFont, bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E293B" } };
+    headerRow.alignment = { vertical: "middle", horizontal: "center" };
+    headerRow.height = 28;
+
+    // Fetch images in parallel
+    const imageBuffers: (ArrayBuffer | null)[] = await Promise.all(
+      calculated.map(async (p) => {
+        if (!p.image_url) return null;
+        try {
+          const res = await fetch(p.image_url);
+          if (!res.ok) return null;
+          return await res.arrayBuffer();
+        } catch {
+          return null;
+        }
+      })
+    );
+
+    // Build data rows
+    for (let i = 0; i < calculated.length; i++) {
+      const p = calculated[i];
+      const ourPrice = p.our_price_thb || p.suggested_price;
+      const platPrice = p.platform_price_thb || 0;
+
+      const dataRow = ws.addRow({
+        no: i + 1,
+        name: p.name,
+        sku: p.sku,
+        our_price: ourPrice,
+        platform_price: platPrice,
+      });
+
+      dataRow.height = IMG_PT;
+      dataRow.font = defaultFont;
+      dataRow.alignment = { vertical: "middle", wrapText: true };
+      dataRow.getCell("our_price").numFmt = "#,##0";
+      dataRow.getCell("platform_price").numFmt = "#,##0";
+      dataRow.getCell("our_price").alignment = { vertical: "middle", horizontal: "right" };
+      dataRow.getCell("platform_price").alignment = { vertical: "middle", horizontal: "right" };
+
+      // Zebra striping
+      if (i % 2 === 1) {
+        dataRow.eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+        });
+      }
+
+      // Add image — fixed square (1:1), positioned at cell B
+      const buf = imageBuffers[i];
+      if (buf) {
+        const imgId = wb.addImage({ buffer: buf, extension: "jpeg" });
+        const rowIdx = dataRow.number - 1; // 0-based for tl
+        ws.addImage(imgId, {
+          tl: { col: 1.05, row: rowIdx + 0.05 },
+          ext: { width: IMG_PT, height: IMG_PT },
+        });
+      }
+    }
+
+    // Border for all cells
+    ws.eachRow((row) => {
+      row.eachCell((cell) => {
+        cell.border = {
+          top: { style: "thin", color: { argb: "FFE2E8F0" } },
+          bottom: { style: "thin", color: { argb: "FFE2E8F0" } },
+          left: { style: "thin", color: { argb: "FFE2E8F0" } },
+          right: { style: "thin", color: { argb: "FFE2E8F0" } },
+        };
+      });
+    });
+
+    const buffer = await wb.xlsx.writeBuffer();
+    saveAs(new Blob([buffer]), `${brand?.name || "products"}-ใบราคา.xlsx`);
+  }, [calculated, brand]);
 
   const handleExport = useCallback(() => {
     if (calculated.length === 0) return;
@@ -767,7 +932,19 @@ export default function BrandPage() {
             >
               <ArrowLeft className="w-5 h-5" />
             </Link>
-            <Image src="/amgo-logo.svg" alt="AMGO" width={36} height={36} />
+            <label className="cursor-pointer flex-shrink-0 relative group/logo">
+              {brand.logo_url ? (
+                <img src={brand.logo_url} alt={brand.name} className="w-9 h-9 rounded-full object-cover border border-gray-200" />
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-sm border border-amber-200">
+                  {brand.name.charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover/logo:opacity-100 flex items-center justify-center transition-opacity">
+                <ImageIcon className="w-4 h-4 text-white" />
+              </div>
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ""; }} />
+            </label>
             <div>
               <h1 className="text-lg font-bold text-gray-900">{brand.name}</h1>
               <p className="text-xs text-gray-700">
@@ -816,6 +993,13 @@ export default function BrandPage() {
             >
               Upload More
             </Link>
+            <button
+              onClick={handleExportPriceList}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-900 bg-amber-400 rounded-lg hover:bg-amber-500 transition-colors"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              ใบราคา
+            </button>
             <button
               onClick={handleExport}
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
@@ -1041,8 +1225,6 @@ export default function BrandPage() {
 .row-highlight td, .row-highlight td * { color: #f1f5f9 !important; }
 .row-highlight td span[class*="bg-"], .row-highlight td div[class*="bg-"] { background-color: rgba(255,255,255,0.1) !important; }
 .row-highlight td input::placeholder, .row-highlight td textarea::placeholder { color: #64748b !important; }
-.row-highlight td .cat-dropdown, .row-highlight td .cat-dropdown * { color: initial !important; background-color: initial !important; }
-.row-highlight td .cat-dropdown { background-color: #fff !important; }
 .frozen { position: sticky; left: 0; z-index: 10; outline: none; border: 1px solid #d1d5db; }
 .frozen-last { box-shadow: 3px 0 6px rgba(0,0,0,0.1); clip-path: inset(0 -8px 0 0); }`}</style>
               <table className="border-separate excel-grid" style={{ borderSpacing: 0, fontSize: "14px" }}>
@@ -1112,7 +1294,7 @@ export default function BrandPage() {
                         <th className="px-1.5 py-1.5 text-right bg-green-50 whitespace-nowrap" data-group="pricing">Suggested</th>
                         <th className="px-1.5 py-1.5 text-right bg-emerald-200 font-bold text-emerald-900 whitespace-nowrap cursor-pointer hover:bg-emerald-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "our_price_thb", label: "Our Price (THB)", type: "number" }); setBulkValue(""); }}>Our Price</th>
                         <th className="px-1.5 py-1.5 text-right bg-green-50 whitespace-nowrap" data-group="pricing">Margin</th>
-                        <th className="px-1.5 py-1.5 text-right bg-orange-200 font-bold text-orange-900 whitespace-nowrap cursor-pointer hover:bg-orange-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "platform_price_thb", label: "Platform Price (THB)", type: "number" }); setBulkValue(""); }}>Platform</th>
+                        <th className="px-1.5 py-1.5 text-right bg-orange-200 font-bold text-orange-900 whitespace-nowrap cursor-pointer hover:bg-orange-300" data-group="pricing" onClick={() => { setPlatformPctOpen(true); setPlatformPctValue(""); }}>Platform</th>
                         <th className="px-1.5 py-1.5 text-right bg-orange-50 whitespace-nowrap" data-group="pricing">Margin</th>
                       </>
                     )}
@@ -1162,7 +1344,7 @@ export default function BrandPage() {
                         className={`group cursor-pointer ${isSelected ? "row-highlight" : ""}`}
                         onClick={(e) => {
                           const tag = (e.target as HTMLElement).tagName;
-                          const isEditable = (e.target as HTMLElement).closest("input, select, textarea, button, a, [contenteditable]");
+                          const isEditable = (e.target as HTMLElement).closest("input, select, textarea, button, a, [contenteditable], [data-no-row-select]");
                           if (isEditable || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA" || tag === "BUTTON") return;
                           setSelectedRows(prev => {
                             const next = new Set(prev);
@@ -1189,27 +1371,27 @@ export default function BrandPage() {
                             </div>
                             <div className="w-[32px] flex-shrink-0 text-center text-gray-500 border-r border-gray-300">{rowNum}</div>
                             <div className="w-[50px] flex-shrink-0 flex items-center justify-center border-r border-gray-300">
-                              {p.image_url ? (
-                                <img
-                                  src={p.image_url}
-                                  alt={p.name}
-                                  className="w-[42px] h-[42px] object-contain cursor-pointer rounded hover:opacity-80 transition-opacity"
-                                  onClick={() => setLightboxUrl(p.image_url!)}
-                                />
-                              ) : (
-                                <label className="cursor-pointer">
-                                  <ImageIcon className="w-5 h-5 text-gray-300 hover:text-blue-400 transition-colors" />
-                                  <input
-                                    type="file"
-                                    accept="image/*"
-                                    className="hidden"
-                                    onChange={(e) => {
-                                      const f = e.target.files?.[0];
-                                      if (f) handleImageUpload(p.id, f);
-                                    }}
+                              <label className="cursor-pointer" data-no-row-select>
+                                {p.image_url ? (
+                                  <img
+                                    src={p.image_url}
+                                    alt={p.name}
+                                    className="w-[42px] h-[42px] object-contain rounded hover:opacity-80 transition-opacity"
                                   />
-                                </label>
-                              )}
+                                ) : (
+                                  <ImageIcon className="w-5 h-5 text-gray-300 hover:text-blue-400 transition-colors" />
+                                )}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) handleImageUpload(p.id, f);
+                                    e.target.value = "";
+                                  }}
+                                />
+                              </label>
                             </div>
                             <div className="flex-1 px-1 overflow-hidden">
                               <textarea
@@ -1488,7 +1670,7 @@ export default function BrandPage() {
               <button
                 onClick={handleBulkApply}
                 disabled={bulkValue === ""}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                className="px-4 py-2 text-sm font-medium text-gray-900 bg-amber-400 rounded-lg hover:bg-amber-500 disabled:opacity-50 transition-colors"
               >
                 Apply to All
               </button>
@@ -1496,15 +1678,44 @@ export default function BrandPage() {
           </div>
         </div>
       )}
-      {/* Lightbox */}
-      {lightboxUrl && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setLightboxUrl(null)}>
-          <img
-            src={lightboxUrl}
-            alt="Product"
-            className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
+
+      {/* Platform % Markup Modal */}
+      {platformPctOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setPlatformPctOpen(false)}>
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">Platform Price — % จาก Our Price</h3>
+            <p className="text-sm text-gray-500 mb-4">ใส่ % เพิ่มจาก Our Price เช่น 10 = เพิ่ม 10%</p>
+            <div className="relative mb-4">
+              <input
+                autoFocus
+                type="number"
+                value={platformPctValue}
+                onChange={(e) => setPlatformPctValue(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handlePlatformPctApply(); if (e.key === "Escape") setPlatformPctOpen(false); }}
+                placeholder="เช่น 10, 15, 20..."
+                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">%</span>
+            </div>
+            {platformPctValue && !isNaN(parseFloat(platformPctValue)) && (
+              <p className="text-xs text-gray-500 mb-3">ตัวอย่าง: Our Price 10,000 → Platform {roundToNicePrice(10000 * (1 + parseFloat(platformPctValue) / 100)).toLocaleString()}</p>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPlatformPctOpen(false)}
+                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handlePlatformPctApply}
+                disabled={!platformPctValue || isNaN(parseFloat(platformPctValue))}
+                className="px-4 py-2 text-sm font-medium text-gray-900 bg-orange-400 rounded-lg hover:bg-orange-500 disabled:opacity-50 transition-colors"
+              >
+                Apply to All
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
