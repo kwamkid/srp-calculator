@@ -7,6 +7,7 @@ export interface Brand {
   eur_to_thb: number;
   vat: number;
   default_multiplier: number;
+  platform_markup_pct: number;
   created_at: string;
 }
 

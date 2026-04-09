@@ -5,6 +5,9 @@ import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
   Download,
   Settings,
   ChevronDown,
@@ -18,6 +21,7 @@ import {
   X,
   Plus,
   Check,
+  Pencil,
   FileSpreadsheet,
 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
@@ -350,8 +354,10 @@ export default function BrandPage() {
   const [myRole, setMyRole] = useState<"owner" | "editor" | "viewer">("viewer");
   const [bulkEdit, setBulkEdit] = useState<{ field: keyof Product; label: string; type: "number" | "text" } | null>(null);
   const [bulkValue, setBulkValue] = useState("");
-  const [platformPctOpen, setPlatformPctOpen] = useState(false);
-  const [platformPctValue, setPlatformPctValue] = useState("");
+  const [platformMarkupInput, setPlatformMarkupInput] = useState("");
+  const [sortBy, setSortBy] = useState<{ id: string; dir: "asc" | "desc" } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterCategory, setFilterCategory] = useState<string>("");
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
@@ -406,6 +412,7 @@ export default function BrandPage() {
       supabase.from("brand_channels").select("*").eq("brand_id", brandId).order("sort_order"),
     ]);
     setBrand(brandRes.data);
+    setPlatformMarkupInput(brandRes.data?.platform_markup_pct ? String(brandRes.data.platform_markup_pct) : "");
     setProducts(productsRes.data || []);
     // Determine role
     if (brandRes.data?.user_id === user.id) {
@@ -460,9 +467,89 @@ export default function BrandPage() {
     ? products.map((p) => calculateProduct(p, brand))
     : [];
 
-  const totalPages = Math.max(1, Math.ceil(calculated.length / perPage));
+  // Filter (search + category)
+  const filteredCalculated = (() => {
+    let arr = calculated;
+    if (filterCategory) arr = arr.filter((p) => p.category === filterCategory);
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      arr = arr.filter(
+        (p) => p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q)
+      );
+    }
+    return arr;
+  })();
+
+  // Sort
+  const SORT_GETTERS: Record<string, (p: CalculatedProduct) => number | string> = {
+    name: (p) => p.name.toLowerCase(),
+    sku: (p) => p.sku.toLowerCase(),
+    category: (p) => p.category.toLowerCase(),
+    fob_usd: (p) => p.fob_usd || 0,
+    fob_eur: (p) => p.fob_eur || 0,
+    fob_thb: (p) => p.fob_thb || 0,
+    freight_do: (p) => p.freight_do || 0,
+    import_tax_pct: (p) => p.import_tax_pct || 0,
+    shipping_cost: (p) => p.shipping_cost || 0,
+    total_import_cost: (p) => p.total_import_cost || 0,
+    srp_usd: (p) => p.srp_usd || 0,
+    srp_eur: (p) => p.srp_eur || 0,
+    srp_thb: (p) => p.srp_thb || 0,
+    suggested: (p) => p.suggested_price || 0,
+    our_price: (p) => p.our_price_thb || p.suggested_price || 0,
+    margin_our: (p) => marginPct(p.our_price_thb || p.suggested_price || 0, p.total_import_cost),
+    platform_price: (p) => p.platform_price_thb || 0,
+    margin_platform: (p) => marginPct(p.platform_price_thb || 0, p.total_import_cost),
+    last_edited: (p) => p.last_edited_at || "",
+  };
+
+  const sortedCalculated = (() => {
+    if (!sortBy) return filteredCalculated;
+    const getter = SORT_GETTERS[sortBy.id];
+    if (!getter) return filteredCalculated;
+    const sorted = [...filteredCalculated].sort((a, b) => {
+      const av = getter(a);
+      const bv = getter(b);
+      if (typeof av === "number" && typeof bv === "number") return av - bv;
+      return String(av).localeCompare(String(bv));
+    });
+    if (sortBy.dir === "desc") sorted.reverse();
+    return sorted;
+  })();
+
+  const handleSort = (id: string) => {
+    setSortBy((prev) => {
+      if (prev?.id === id) {
+        if (prev.dir === "asc") return { id, dir: "desc" };
+        return null; // 3rd click clears sort
+      }
+      return { id, dir: "asc" };
+    });
+    setCurrentPage(1);
+  };
+
+  const SortIcon = ({ id }: { id: string }) => {
+    if (sortBy?.id !== id) {
+      return <ArrowUpDown className="w-3 h-3 inline-block opacity-25 ml-0.5" />;
+    }
+    return sortBy.dir === "asc"
+      ? <ArrowUp className="w-3 h-3 inline-block ml-0.5" />
+      : <ArrowDown className="w-3 h-3 inline-block ml-0.5" />;
+  };
+
+  const BulkEditBtn = ({ onClick }: { onClick: () => void }) => (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className="text-gray-400 hover:text-blue-600 mr-1 align-middle"
+      title="Bulk edit"
+    >
+      <Pencil className="w-2.5 h-2.5 inline" />
+    </button>
+  );
+
+  const totalPages = Math.max(1, Math.ceil(sortedCalculated.length / perPage));
   const safePage = Math.min(currentPage, totalPages);
-  const paginatedProducts = calculated.slice((safePage - 1) * perPage, safePage * perPage);
+  const paginatedProducts = sortedCalculated.slice((safePage - 1) * perPage, safePage * perPage);
 
   // Auto-hide columns when no product has a value
   const hasData = {
@@ -728,12 +815,14 @@ export default function BrandPage() {
     setBulkValue("");
   }, [bulkEdit, bulkValue, products, user]);
 
-  const handlePlatformPctApply = useCallback(async () => {
-    const pct = parseFloat(platformPctValue);
-    if (isNaN(pct)) return;
+  const handlePlatformMarkupApply = useCallback(async (pct: number) => {
+    if (isNaN(pct) || pct < 0) return;
+    // Persist on brand
+    setBrand((prev) => prev ? { ...prev, platform_markup_pct: pct } : prev);
+    await supabase.from("brands").update({ platform_markup_pct: pct }).eq("id", brandId);
+    // Recompute platform_price_thb for all products
     const editedBy = user?.email || "";
     const editedAt = new Date().toISOString();
-    // Compute updates upfront (outside setProducts) so they're ready for DB save
     const updates = calculated.map((c) => {
       const ourPrice = c.our_price_thb || c.suggested_price || 0;
       return { id: c.id, platform_price_thb: roundToNicePrice(ourPrice * (1 + pct / 100)) };
@@ -753,9 +842,7 @@ export default function BrandPage() {
         )
       );
     }
-    setPlatformPctOpen(false);
-    setPlatformPctValue("");
-  }, [platformPctValue, user, calculated]);
+  }, [brandId, user, calculated]);
 
   const handleExportPriceList = useCallback(async () => {
     if (calculated.length === 0) return;
@@ -1216,6 +1303,47 @@ export default function BrandPage() {
                   Online
                 </button>
               </div>
+
+              {/* Search + Category filter */}
+              <span className="mx-1 text-gray-300">|</span>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
+                  placeholder="ค้นหา ชื่อสินค้า / SKU..."
+                  className="pl-2 pr-7 py-1 text-xs border border-gray-300 rounded-md text-gray-800 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 w-56"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => { setSearchQuery(""); setCurrentPage(1); }}
+                    className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700"
+                    aria-label="Clear search"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              <select
+                value={filterCategory}
+                onChange={(e) => { setFilterCategory(e.target.value); setCurrentPage(1); }}
+                className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-800 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 focus:border-blue-400 cursor-pointer"
+              >
+                <option value="">หมวดหมู่ทั้งหมด</option>
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+              {sortBy && (
+                <button
+                  onClick={() => setSortBy(null)}
+                  className="px-2 py-1 text-xs rounded-md border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors flex items-center gap-1"
+                  title="Clear sort"
+                >
+                  <X className="w-3 h-3" />
+                  Sort: {sortBy.id} {sortBy.dir === "asc" ? "↑" : "↓"}
+                </button>
+              )}
             </div>
 
             <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 220px)" }}>
@@ -1264,42 +1392,115 @@ export default function BrandPage() {
                         </div>
                         <div className="w-[32px] flex-shrink-0 text-center border-r border-gray-300">#</div>
                         <div className="w-[50px] flex-shrink-0 text-center border-r border-gray-300">Img</div>
-                        <div className="flex-1 px-1.5 text-left whitespace-nowrap">Product</div>
+                        <div className="flex-1 px-1.5 text-left whitespace-nowrap cursor-pointer hover:bg-gray-200 select-none" onClick={() => handleSort("name")}>
+                          Product<SortIcon id="name" />
+                        </div>
                       </div>
                     </th>
-                    {visibleGroups.sku && <th className="px-1.5 py-1.5 text-left bg-gray-100 whitespace-nowrap" data-group="product">SKU</th>}
+                    {visibleGroups.sku && (
+                      <th className="px-1.5 py-1.5 text-left bg-gray-100 whitespace-nowrap cursor-pointer hover:bg-gray-200 select-none" data-group="product" onClick={() => handleSort("sku")}>
+                        SKU<SortIcon id="sku" />
+                      </th>
+                    )}
 
                     {visibleGroups.category && (
-                      <th className="px-1.5 py-1.5 text-left bg-white whitespace-nowrap" data-group="category">Cat</th>
+                      <th className="px-1.5 py-1.5 text-left bg-white whitespace-nowrap cursor-pointer hover:bg-gray-100 select-none" data-group="category" onClick={() => handleSort("category")}>
+                        Cat<SortIcon id="category" />
+                      </th>
                     )}
 
                     {visibleGroups.cost && (
                       <>
-                        {hasData.fob_usd && <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "fob_usd", label: "FOB USD", type: "number" }); setBulkValue(""); }}>FOB $</th>}
-                        {hasData.fob_eur && <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "fob_eur", label: "FOB EUR", type: "number" }); setBulkValue(""); }}>FOB &euro;</th>}
-                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap" data-group="cost">FOB &#3647;</th>
-                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "freight_do", label: "Freight+D/O", type: "number" }); setBulkValue(""); }}>Freight+D/O</th>
-                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "import_tax_pct", label: "Import Tax %", type: "number" }); setBulkValue(""); }}>Tax %</th>
-                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100" data-group="cost" onClick={() => { setBulkEdit({ field: "shipping_cost", label: "Shipping Cost", type: "number" }); setBulkValue(""); }}>Shipping</th>
-                        <th className="px-1.5 py-1.5 text-right bg-sky-100 font-bold whitespace-nowrap" data-group="cost">Total Cost</th>
+                        {hasData.fob_usd && (
+                          <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100 select-none" data-group="cost" onClick={() => handleSort("fob_usd")}>
+                            <BulkEditBtn onClick={() => { setBulkEdit({ field: "fob_usd", label: "FOB USD", type: "number" }); setBulkValue(""); }} />
+                            FOB $<SortIcon id="fob_usd" />
+                          </th>
+                        )}
+                        {hasData.fob_eur && (
+                          <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100 select-none" data-group="cost" onClick={() => handleSort("fob_eur")}>
+                            <BulkEditBtn onClick={() => { setBulkEdit({ field: "fob_eur", label: "FOB EUR", type: "number" }); setBulkValue(""); }} />
+                            FOB &euro;<SortIcon id="fob_eur" />
+                          </th>
+                        )}
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100 select-none" data-group="cost" onClick={() => handleSort("fob_thb")}>
+                          FOB &#3647;<SortIcon id="fob_thb" />
+                        </th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100 select-none" data-group="cost" onClick={() => handleSort("freight_do")}>
+                          <BulkEditBtn onClick={() => { setBulkEdit({ field: "freight_do", label: "Freight+D/O", type: "number" }); setBulkValue(""); }} />
+                          Freight+D/O<SortIcon id="freight_do" />
+                        </th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100 select-none" data-group="cost" onClick={() => handleSort("import_tax_pct")}>
+                          <BulkEditBtn onClick={() => { setBulkEdit({ field: "import_tax_pct", label: "Import Tax %", type: "number" }); setBulkValue(""); }} />
+                          Tax %<SortIcon id="import_tax_pct" />
+                        </th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-50 whitespace-nowrap cursor-pointer hover:bg-sky-100 select-none" data-group="cost" onClick={() => handleSort("shipping_cost")}>
+                          <BulkEditBtn onClick={() => { setBulkEdit({ field: "shipping_cost", label: "Shipping Cost", type: "number" }); setBulkValue(""); }} />
+                          Shipping<SortIcon id="shipping_cost" />
+                        </th>
+                        <th className="px-1.5 py-1.5 text-right bg-sky-100 font-bold whitespace-nowrap cursor-pointer hover:bg-sky-200 select-none" data-group="cost" onClick={() => handleSort("total_import_cost")}>
+                          Total Cost<SortIcon id="total_import_cost" />
+                        </th>
                       </>
                     )}
 
                     {visibleGroups.srp && (
                       <>
-                        {hasData.srp_usd && <th className="px-1.5 py-1.5 text-right bg-violet-50 whitespace-nowrap cursor-pointer hover:bg-violet-100" data-group="srp" onClick={() => { setBulkEdit({ field: "srp_usd", label: "SRP USD", type: "number" }); setBulkValue(""); }}>SRP $</th>}
-                        {hasData.srp_eur && <th className="px-1.5 py-1.5 text-right bg-violet-50 whitespace-nowrap cursor-pointer hover:bg-violet-100" data-group="srp" onClick={() => { setBulkEdit({ field: "srp_eur", label: "SRP EUR", type: "number" }); setBulkValue(""); }}>SRP &euro;</th>}
-                        <th className="px-1.5 py-1.5 text-right bg-violet-50 whitespace-nowrap" data-group="srp">SRP &#3647;</th>
+                        {hasData.srp_usd && (
+                          <th className="px-1.5 py-1.5 text-right bg-violet-50 whitespace-nowrap cursor-pointer hover:bg-violet-100 select-none" data-group="srp" onClick={() => handleSort("srp_usd")}>
+                            <BulkEditBtn onClick={() => { setBulkEdit({ field: "srp_usd", label: "SRP USD", type: "number" }); setBulkValue(""); }} />
+                            SRP $<SortIcon id="srp_usd" />
+                          </th>
+                        )}
+                        {hasData.srp_eur && (
+                          <th className="px-1.5 py-1.5 text-right bg-violet-50 whitespace-nowrap cursor-pointer hover:bg-violet-100 select-none" data-group="srp" onClick={() => handleSort("srp_eur")}>
+                            <BulkEditBtn onClick={() => { setBulkEdit({ field: "srp_eur", label: "SRP EUR", type: "number" }); setBulkValue(""); }} />
+                            SRP &euro;<SortIcon id="srp_eur" />
+                          </th>
+                        )}
+                        <th className="px-1.5 py-1.5 text-right bg-violet-50 whitespace-nowrap cursor-pointer hover:bg-violet-100 select-none" data-group="srp" onClick={() => handleSort("srp_thb")}>
+                          SRP &#3647;<SortIcon id="srp_thb" />
+                        </th>
                       </>
                     )}
 
                     {visibleGroups.pricing && (
                       <>
-                        <th className="px-1.5 py-1.5 text-right bg-green-50 whitespace-nowrap" data-group="pricing">Suggested</th>
-                        <th className="px-1.5 py-1.5 text-right bg-emerald-200 font-bold text-emerald-900 whitespace-nowrap cursor-pointer hover:bg-emerald-300" data-group="pricing" onClick={() => { setBulkEdit({ field: "our_price_thb", label: "Our Price (THB)", type: "number" }); setBulkValue(""); }}>Our Price</th>
-                        <th className="px-1.5 py-1.5 text-right bg-green-50 whitespace-nowrap" data-group="pricing">Margin</th>
-                        <th className="px-1.5 py-1.5 text-right bg-orange-200 font-bold text-orange-900 whitespace-nowrap cursor-pointer hover:bg-orange-300" data-group="pricing" onClick={() => { setPlatformPctOpen(true); setPlatformPctValue(""); }}>Platform</th>
-                        <th className="px-1.5 py-1.5 text-right bg-orange-50 whitespace-nowrap" data-group="pricing">Margin</th>
+                        <th className="px-1.5 py-1.5 text-right bg-green-50 whitespace-nowrap cursor-pointer hover:bg-green-100 select-none" data-group="pricing" onClick={() => handleSort("suggested")}>
+                          Suggested<SortIcon id="suggested" />
+                        </th>
+                        <th className="px-1.5 py-1.5 text-right bg-emerald-200 font-bold text-emerald-900 whitespace-nowrap cursor-pointer hover:bg-emerald-300 select-none" data-group="pricing" onClick={() => handleSort("our_price")}>
+                          <BulkEditBtn onClick={() => { setBulkEdit({ field: "our_price_thb", label: "Our Price (THB)", type: "number" }); setBulkValue(""); }} />
+                          Our Price<SortIcon id="our_price" />
+                        </th>
+                        <th className="px-1.5 py-1.5 text-right bg-green-50 whitespace-nowrap cursor-pointer hover:bg-green-100 select-none" data-group="pricing" onClick={() => handleSort("margin_our")}>
+                          Margin<SortIcon id="margin_our" />
+                        </th>
+                        <th className="px-1.5 py-1.5 text-right bg-orange-200 font-bold text-orange-900 whitespace-nowrap" data-group="pricing">
+                          <div className="flex items-center justify-end gap-1">
+                            <span className="cursor-pointer hover:underline select-none" onClick={() => handleSort("platform_price")}>
+                              Platform<SortIcon id="platform_price" />
+                            </span>
+                            <input
+                              type="number"
+                              value={platformMarkupInput}
+                              onChange={(e) => setPlatformMarkupInput(e.target.value)}
+                              onBlur={() => {
+                                const v = parseFloat(platformMarkupInput);
+                                if (!isNaN(v) && v !== (brand?.platform_markup_pct ?? 0)) {
+                                  handlePlatformMarkupApply(v);
+                                }
+                              }}
+                              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                              placeholder="0"
+                              className="w-12 px-1 py-0.5 border border-orange-400 rounded text-right bg-white text-orange-900 font-semibold focus:outline-none focus:ring-1 focus:ring-orange-500"
+                            />
+                            <span>%</span>
+                          </div>
+                        </th>
+                        <th className="px-1.5 py-1.5 text-right bg-orange-50 whitespace-nowrap cursor-pointer hover:bg-orange-100 select-none" data-group="pricing" onClick={() => handleSort("margin_platform")}>
+                          Margin<SortIcon id="margin_platform" />
+                        </th>
                       </>
                     )}
 
@@ -1329,7 +1530,9 @@ export default function BrandPage() {
                         </React.Fragment>
                       ) : null
                     ))}
-                    <th className="px-1.5 py-1.5 text-left whitespace-nowrap bg-white">Last Edit</th>
+                    <th className="px-1.5 py-1.5 text-left whitespace-nowrap bg-white cursor-pointer hover:bg-gray-100 select-none" onClick={() => handleSort("last_edited")}>
+                      Last Edit<SortIcon id="last_edited" />
+                    </th>
                     <th className="px-1 py-1.5 w-8 bg-white"></th>
                   </tr>
                 </thead>
@@ -1572,7 +1775,11 @@ export default function BrandPage() {
             {/* Pagination */}
             <div className="px-4 py-2.5 border-t text-white flex items-center justify-between text-[13px]" style={{ backgroundColor: "#f9a11b", borderColor: "#e08a00" }}>
               <div className="flex items-center gap-3">
-                <span className="text-white/80">{calculated.length} records</span>
+                <span className="text-white/80">
+                  {sortedCalculated.length === calculated.length
+                    ? `${calculated.length} records`
+                    : `${sortedCalculated.length} of ${calculated.length} records`}
+                </span>
                 {selectedRows.size > 0 && (
                   <>
                     <span className="text-white font-bold">{selectedRows.size} selected</span>
@@ -1683,45 +1890,6 @@ export default function BrandPage() {
         </div>
       )}
 
-      {/* Platform % Markup Modal */}
-      {platformPctOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setPlatformPctOpen(false)}>
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-lg font-semibold text-gray-900 mb-1">Platform Price — % จาก Our Price</h3>
-            <p className="text-sm text-gray-500 mb-4">ใส่ % เพิ่มจาก Our Price เช่น 10 = เพิ่ม 10%</p>
-            <div className="relative mb-4">
-              <input
-                autoFocus
-                type="number"
-                value={platformPctValue}
-                onChange={(e) => setPlatformPctValue(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handlePlatformPctApply(); if (e.key === "Escape") setPlatformPctOpen(false); }}
-                placeholder="เช่น 10, 15, 20..."
-                className="w-full px-3 py-2 pr-8 border border-gray-300 rounded-lg text-gray-900 focus:ring-2 focus:ring-orange-400 focus:border-orange-400 outline-none"
-              />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 font-semibold">%</span>
-            </div>
-            {platformPctValue && !isNaN(parseFloat(platformPctValue)) && (
-              <p className="text-xs text-gray-500 mb-3">ตัวอย่าง: Our Price 10,000 → Platform {roundToNicePrice(10000 * (1 + parseFloat(platformPctValue) / 100)).toLocaleString()}</p>
-            )}
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setPlatformPctOpen(false)}
-                className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handlePlatformPctApply}
-                disabled={!platformPctValue || isNaN(parseFloat(platformPctValue))}
-                className="px-4 py-2 text-sm font-medium text-gray-900 bg-orange-400 rounded-lg hover:bg-orange-500 disabled:opacity-50 transition-colors"
-              >
-                Apply to All
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
