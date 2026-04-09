@@ -215,9 +215,9 @@ export default function Home() {
                 <div className="flex items-center justify-between px-5 py-4">
                   <div className="flex items-center gap-3">
                     {brand.logo_url ? (
-                      <img src={brand.logo_url} alt={brand.name} className="w-10 h-10 rounded-full object-cover border border-gray-200" />
+                      <img src={brand.logo_url} alt={brand.name} className="w-10 h-10 rounded-lg object-cover border border-gray-200" />
                     ) : (
-                      <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-base border border-amber-200">
+                      <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-base border border-amber-200">
                         {brand.name.charAt(0).toUpperCase()}
                       </div>
                     )}

@@ -641,7 +641,7 @@ export default function BrandPage() {
       const {
         data: { publicUrl },
       } = supabase.storage.from("product-images").getPublicUrl(path);
-      handleProductUpdate(productId, "image_url", publicUrl);
+      handleProductUpdate(productId, "image_url", `${publicUrl}?t=${Date.now()}`);
     },
     [brandId, handleProductUpdate]
   );
@@ -733,22 +733,26 @@ export default function BrandPage() {
     if (isNaN(pct)) return;
     const editedBy = user?.email || "";
     const editedAt = new Date().toISOString();
-    // Build a lookup from calculated to get the actual displayed Our Price (includes suggested_price fallback)
-    const priceMap = new Map(calculated.map((c) => [c.id, c.our_price_thb || c.suggested_price || 0]));
-    const updates: { id: string; platform_price_thb: number }[] = [];
+    // Compute updates upfront (outside setProducts) so they're ready for DB save
+    const updates = calculated.map((c) => {
+      const ourPrice = c.our_price_thb || c.suggested_price || 0;
+      return { id: c.id, platform_price_thb: roundToNicePrice(ourPrice * (1 + pct / 100)) };
+    });
+    const updateMap = new Map(updates.map((u) => [u.id, u.platform_price_thb]));
     setProducts((prev) =>
       prev.map((p) => {
-        const ourPrice = priceMap.get(p.id) || p.our_price_thb || 0;
-        const newPlat = roundToNicePrice(ourPrice * (1 + pct / 100));
-        updates.push({ id: p.id, platform_price_thb: newPlat });
+        const newPlat = updateMap.get(p.id) ?? p.platform_price_thb;
         return { ...p, platform_price_thb: newPlat, last_edited_by: editedBy, last_edited_at: editedAt };
       })
     );
-    await Promise.all(
-      updates.map((u) =>
-        supabase.from("products").update({ platform_price_thb: u.platform_price_thb, last_edited_by: editedBy, last_edited_at: editedAt }).eq("id", u.id)
-      )
-    );
+    // Save to DB in batches of 20
+    for (let i = 0; i < updates.length; i += 20) {
+      await Promise.all(
+        updates.slice(i, i + 20).map((u) =>
+          supabase.from("products").update({ platform_price_thb: u.platform_price_thb, last_edited_by: editedBy, last_edited_at: editedAt }).eq("id", u.id)
+        )
+      );
+    }
     setPlatformPctOpen(false);
     setPlatformPctValue("");
   }, [platformPctValue, user, calculated]);
@@ -934,13 +938,13 @@ export default function BrandPage() {
             </Link>
             <label className="cursor-pointer flex-shrink-0 relative group/logo">
               {brand.logo_url ? (
-                <img src={brand.logo_url} alt={brand.name} className="w-9 h-9 rounded-full object-cover border border-gray-200" />
+                <img src={brand.logo_url} alt={brand.name} className="w-9 h-9 rounded-lg object-cover border border-gray-200" />
               ) : (
-                <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-sm border border-amber-200">
+                <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center text-amber-600 font-bold text-sm border border-amber-200">
                   {brand.name.charAt(0).toUpperCase()}
                 </div>
               )}
-              <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover/logo:opacity-100 flex items-center justify-center transition-opacity">
+              <div className="absolute inset-0 rounded-lg bg-black/40 opacity-0 group-hover/logo:opacity-100 flex items-center justify-center transition-opacity">
                 <ImageIcon className="w-4 h-4 text-white" />
               </div>
               <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleLogoUpload(f); e.target.value = ""; }} />
