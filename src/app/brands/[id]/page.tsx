@@ -362,6 +362,16 @@ export default function BrandPage() {
   const [statusTab, setStatusTab] = useState<"active" | "inactive" | "all">("active");
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
   const [lightboxId, setLightboxId] = useState<string | null>(null);
+
+  // Close lightbox on Esc
+  useEffect(() => {
+    if (!lightboxId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightboxId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightboxId]);
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [activeTab, setActiveTab] = useState<"offline" | "online">("offline");
