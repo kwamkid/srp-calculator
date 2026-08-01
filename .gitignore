@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# brand source data (images/PDF/Excel) — too large for git
+/Brand-data/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

@@ -22,6 +22,7 @@ import {
   Plus,
   Check,
   Pencil,
+  Power,
   FileSpreadsheet,
 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
@@ -358,7 +359,9 @@ export default function BrandPage() {
   const [sortBy, setSortBy] = useState<{ id: string; dir: "asc" | "desc" } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterCategory, setFilterCategory] = useState<string>("");
+  const [statusTab, setStatusTab] = useState<"active" | "inactive" | "all">("active");
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set());
+  const [lightboxId, setLightboxId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [activeTab, setActiveTab] = useState<"offline" | "online">("offline");
@@ -467,9 +470,15 @@ export default function BrandPage() {
     ? products.map((p) => calculateProduct(p, brand))
     : [];
 
-  // Filter (search + category)
+  // Counts for status tabs (independent of other filters)
+  const activeCount = calculated.filter((p) => p.is_active !== false).length;
+  const inactiveCount = calculated.filter((p) => p.is_active === false).length;
+
+  // Filter (status + search + category)
   const filteredCalculated = (() => {
     let arr = calculated;
+    if (statusTab === "active") arr = arr.filter((p) => p.is_active !== false);
+    else if (statusTab === "inactive") arr = arr.filter((p) => p.is_active === false);
     if (filterCategory) arr = arr.filter((p) => p.category === filterCategory);
     const q = searchQuery.trim().toLowerCase();
     if (q) {
@@ -578,7 +587,7 @@ export default function BrandPage() {
   const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const handleProductUpdate = useCallback(
-    (productId: string, field: keyof Product, value: number | string) => {
+    (productId: string, field: keyof Product, value: number | string | boolean) => {
       const editedBy = user?.email || "";
       const editedAt = new Date().toISOString();
       // Instant local state update
@@ -729,6 +738,16 @@ export default function BrandPage() {
         data: { publicUrl },
       } = supabase.storage.from("product-images").getPublicUrl(path);
       handleProductUpdate(productId, "image_url", `${publicUrl}?t=${Date.now()}`);
+    },
+    [brandId, handleProductUpdate]
+  );
+
+  const handleImageDelete = useCallback(
+    async (productId: string) => {
+      if (!confirm("ต้องการลบรูปนี้ใช่หรือไม่?")) return;
+      await supabase.storage.from("product-images").remove([`${brandId}/${productId}.jpg`]);
+      handleProductUpdate(productId, "image_url", "");
+      setLightboxId(null);
     },
     [brandId, handleProductUpdate]
   );
@@ -1304,6 +1323,41 @@ export default function BrandPage() {
                 </button>
               </div>
 
+              {/* Active/Inactive status tabs */}
+              <span className="mx-1 text-gray-300">|</span>
+              <div className="flex bg-white rounded-md border border-gray-200 overflow-hidden">
+                <button
+                  onClick={() => { setStatusTab("active"); setCurrentPage(1); }}
+                  className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                    statusTab === "active"
+                      ? "bg-green-600 text-white"
+                      : "text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  Active ({activeCount})
+                </button>
+                <button
+                  onClick={() => { setStatusTab("inactive"); setCurrentPage(1); }}
+                  className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                    statusTab === "inactive"
+                      ? "bg-gray-600 text-white"
+                      : "text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  Inactive ({inactiveCount})
+                </button>
+                <button
+                  onClick={() => { setStatusTab("all"); setCurrentPage(1); }}
+                  className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                    statusTab === "all"
+                      ? "bg-blue-600 text-white"
+                      : "text-gray-600 hover:bg-gray-100"
+                  }`}
+                >
+                  All ({calculated.length})
+                </button>
+              </div>
+
               {/* Search + Category filter */}
               <span className="mx-1 text-gray-300">|</span>
               <div className="relative">
@@ -1548,7 +1602,7 @@ export default function BrandPage() {
                     return (
                       <tr
                         key={p.id}
-                        className={`group cursor-pointer ${isSelected ? "row-highlight" : ""}`}
+                        className={`group cursor-pointer ${isSelected ? "row-highlight" : ""} ${p.is_active === false ? "opacity-50" : ""}`}
                         onClick={(e) => {
                           const tag = (e.target as HTMLElement).tagName;
                           const isEditable = (e.target as HTMLElement).closest("input, select, textarea, button, a, [contenteditable], [data-no-row-select]");
@@ -1577,28 +1631,30 @@ export default function BrandPage() {
                               />
                             </div>
                             <div className="w-[32px] flex-shrink-0 text-center text-gray-500 border-r border-gray-300">{rowNum}</div>
-                            <div className="w-[50px] flex-shrink-0 flex items-center justify-center border-r border-gray-300">
-                              <label className="cursor-pointer" data-no-row-select>
-                                {p.image_url ? (
+                            <div className="w-[50px] flex-shrink-0 flex items-center justify-center border-r border-gray-300" data-no-row-select>
+                              {p.image_url ? (
+                                <button type="button" onClick={() => setLightboxId(p.id)}>
                                   <img
                                     src={p.image_url}
                                     alt={p.name}
-                                    className="w-[42px] h-[42px] object-contain rounded hover:opacity-80 transition-opacity"
+                                    className="w-[42px] h-[42px] object-contain rounded hover:opacity-80 transition-opacity cursor-pointer"
                                   />
-                                ) : (
+                                </button>
+                              ) : (
+                                <label className="cursor-pointer">
                                   <ImageIcon className="w-5 h-5 text-gray-300 hover:text-blue-400 transition-colors" />
-                                )}
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  className="hidden"
-                                  onChange={(e) => {
-                                    const f = e.target.files?.[0];
-                                    if (f) handleImageUpload(p.id, f);
-                                    e.target.value = "";
-                                  }}
-                                />
-                              </label>
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const f = e.target.files?.[0];
+                                      if (f) handleImageUpload(p.id, f);
+                                      e.target.value = "";
+                                    }}
+                                  />
+                                </label>
+                              )}
                             </div>
                             <div className="flex-1 px-1 overflow-hidden">
                               <textarea
@@ -1758,12 +1814,21 @@ export default function BrandPage() {
                           )}
                         </td>
                         <td className="px-1 py-0.5 bg-white">
-                          <button
-                            onClick={() => handleDeleteProduct(p.id)}
-                            className="text-gray-300 hover:text-red-500 transition-colors"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleProductUpdate(p.id, "is_active", p.is_active === false)}
+                              className={`transition-colors ${p.is_active === false ? "text-gray-300 hover:text-green-500" : "text-green-500 hover:text-gray-400"}`}
+                              title={p.is_active === false ? "เปิดใช้งานสินค้า" : "ปิดใช้งานสินค้า"}
+                            >
+                              <Power className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteProduct(p.id)}
+                              className="text-gray-300 hover:text-red-500 transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1783,6 +1848,32 @@ export default function BrandPage() {
                 {selectedRows.size > 0 && (
                   <>
                     <span className="text-white font-bold">{selectedRows.size} selected</span>
+                    <button
+                      onClick={async () => {
+                        const ids = [...selectedRows];
+                        const editedBy = user?.email || "";
+                        const editedAt = new Date().toISOString();
+                        setProducts(prev => prev.map(p => ids.includes(p.id) ? { ...p, is_active: true, last_edited_by: editedBy, last_edited_at: editedAt } : p));
+                        await supabase.from("products").update({ is_active: true, last_edited_by: editedBy, last_edited_at: editedAt }).in("id", ids);
+                      }}
+                      className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium rounded-full transition-colors flex items-center gap-1"
+                    >
+                      <Power className="w-3 h-3" />
+                      Active
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const ids = [...selectedRows];
+                        const editedBy = user?.email || "";
+                        const editedAt = new Date().toISOString();
+                        setProducts(prev => prev.map(p => ids.includes(p.id) ? { ...p, is_active: false, last_edited_by: editedBy, last_edited_at: editedAt } : p));
+                        await supabase.from("products").update({ is_active: false, last_edited_by: editedBy, last_edited_at: editedAt }).in("id", ids);
+                      }}
+                      className="px-2.5 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs font-medium rounded-full transition-colors flex items-center gap-1"
+                    >
+                      <Power className="w-3 h-3" />
+                      Inactive
+                    </button>
                     <button
                       onClick={async () => {
                         if (!confirm(`ลบสินค้าที่เลือก ${selectedRows.size} รายการ?`)) return;
@@ -1889,6 +1980,57 @@ export default function BrandPage() {
           </div>
         </div>
       )}
+
+      {/* Image lightbox */}
+      {lightboxId && (() => {
+        const lp = products.find((p) => p.id === lightboxId);
+        if (!lp || !lp.image_url) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={() => setLightboxId(null)}>
+            <div className="bg-white rounded-xl shadow-xl p-4 w-full max-w-lg mx-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-medium text-gray-900 truncate pr-2">{lp.name}</p>
+                <button
+                  onClick={() => setLightboxId(null)}
+                  className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <img
+                src={lp.image_url}
+                alt={lp.name}
+                className="w-full max-h-[60vh] object-contain rounded-lg bg-gray-50"
+              />
+              <div className="flex justify-center gap-2 mt-3">
+                <Tooltip content="Change picture">
+                  <label className="p-2.5 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer transition-colors block">
+                    <Pencil className="w-5 h-5" />
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleImageUpload(lp.id, f);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </Tooltip>
+                <Tooltip content="Delete picture">
+                  <button
+                    onClick={() => handleImageDelete(lp.id)}
+                    className="p-2.5 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

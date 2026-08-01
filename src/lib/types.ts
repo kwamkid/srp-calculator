@@ -30,6 +30,7 @@ export interface Product {
   platform_price_thb: number;
   notes: string;
   sort_order: number;
+  is_active: boolean;
   created_at: string;
   last_edited_by: string;
   last_edited_at: string;
